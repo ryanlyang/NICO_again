@@ -42,6 +42,7 @@ VAL_SPLIT_RATIO = 0.16
 SEED = 59
 DEFAULT_TXTLIST_DIR = "/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist"
 DEFAULT_MASK_ROOT = "/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap"
+DEFAULT_IMAGE_ROOT = "/home/ryreu/guided_cnn/code/NICO-plus/data/Unzip_DG_Bench/DG_Benchmark/NICO_DG"
 ALL_DOMAINS = ["autumn", "rock", "dim", "grass", "outdoor", "water"]
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -78,8 +79,10 @@ class NICOWithMasks(Dataset):
     Returns: (image, label, mask, path)
     """
     def __init__(self, txtdir, dataset_name, domains, phase, mask_root,
+                 image_root=None,
                  image_transform=None, mask_transform=None):
         self.mask_root = mask_root
+        self.image_root = image_root
         self.image_transform = image_transform
         self.mask_transform = mask_transform
 
@@ -94,7 +97,7 @@ class NICOWithMasks(Dataset):
             all_names.extend(names)
             all_labels.extend(labels)
 
-        self.image_paths = all_names
+        self.image_paths = [self._resolve_path(p) for p in all_names]
         self.labels = all_labels
 
     def __len__(self):
@@ -163,6 +166,21 @@ class NICOWithMasks(Dataset):
         mask = TF.to_tensor(mask)
         return image, mask
 
+    def _resolve_path(self, path):
+        if os.path.isabs(path):
+            return path
+        if self.image_root is None:
+            return path
+        rel = path.lstrip(os.sep)
+        root_norm = os.path.normpath(self.image_root)
+        root_name = os.path.basename(root_norm)
+        rel_head = rel.split(os.sep, 1)[0]
+        if rel_head == root_name:
+            base = os.path.dirname(root_norm)
+        else:
+            base = root_norm
+        return os.path.normpath(os.path.join(base, rel))
+
     def _get_mask_path(self, img_path):
         """
         Convert image path to mask path based on flat directory structure.
@@ -198,12 +216,14 @@ def build_train_val_datasets(args, sources, data_transforms, generator):
         train_dataset = NICOWithMasks(
             args.txtdir, args.dataset, sources, "train",
             args.mask_root,
+            args.image_root,
             data_transforms['train'],
             None
         )
         val_dataset = NICOWithMasks(
             args.txtdir, args.dataset, sources, "val",
             args.mask_root,
+            args.image_root,
             data_transforms['eval'],
             None
         )
@@ -213,6 +233,7 @@ def build_train_val_datasets(args, sources, data_transforms, generator):
     full_train_base = NICOWithMasks(
         args.txtdir, args.dataset, sources, "train",
         args.mask_root,
+        args.image_root,
         None,
         None
     )
@@ -229,12 +250,14 @@ def build_train_val_datasets(args, sources, data_transforms, generator):
     train_dataset = NICOWithMasks(
         args.txtdir, args.dataset, sources, "train",
         args.mask_root,
+        args.image_root,
         data_transforms['train'],
         None
     )
     val_dataset = NICOWithMasks(
         args.txtdir, args.dataset, sources, "train",
         args.mask_root,
+        args.image_root,
         data_transforms['eval'],
         None
     )
@@ -466,6 +489,7 @@ def main():
 
     parser.add_argument('--txtdir', type=str, default=DEFAULT_TXTLIST_DIR, help='Path to txt lists')
     parser.add_argument('--dataset', type=str, default='NICO', help='Dataset name')
+    parser.add_argument('--image_root', type=str, default=DEFAULT_IMAGE_ROOT, help='Root directory for image files')
     parser.add_argument('--target', nargs='+', required=True, help='Target domains')
     parser.add_argument('--num_classes', type=int, default=60, help='Number of classes')
     parser.add_argument('--mask_root', type=str, default=DEFAULT_MASK_ROOT, help='Path to mask directory')
@@ -527,6 +551,7 @@ def main():
         NICOWithMasks(
             args.txtdir, args.dataset, [domain], "test",
             args.mask_root,
+            args.image_root,
             data_transforms['eval'],
             None
         )

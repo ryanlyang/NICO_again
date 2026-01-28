@@ -51,6 +51,7 @@ REPO_ROOT=${REPO_ROOT:-/home/ryreu/guided_cnn/NICO_again/NICO_again}
 TXTLIST_DIR=${TXTLIST_DIR:-/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist}
 MASK_ROOT=${MASK_ROOT:-/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap}
 OUTPUT_DIR=${OUTPUT_DIR:-/home/ryreu/guided_cnn/NICO_runs/output}
+IMAGE_ROOT=${IMAGE_ROOT:-/home/ryreu/guided_cnn/code/NICO-plus/data/Unzip_DG_Bench/DG_Benchmark/NICO_DG}
 TARGET_DOMAINS=${TARGET_DOMAINS:?Set TARGET_DOMAINS (e.g., "autumn rock")}
 
 DATASET=${DATASET:-NICO}
@@ -76,6 +77,10 @@ if [[ ! -d "$MASK_ROOT" ]]; then
   echo "Missing MASK_ROOT: $MASK_ROOT" >&2
   exit 1
 fi
+if [[ ! -d "$IMAGE_ROOT" ]]; then
+  echo "Missing IMAGE_ROOT: $IMAGE_ROOT" >&2
+  exit 1
+fi
 if [[ ! -f "$REPO_ROOT/run_nico_guided_optuna.py" ]]; then
   echo "Missing run_nico_guided_optuna.py in $REPO_ROOT" >&2
   exit 1
@@ -98,6 +103,7 @@ echo "[$(date)] Host: $(hostname)"
 echo "Repo: $REPO_ROOT"
 echo "txtlist: $TXTLIST_DIR"
 echo "Masks: $MASK_ROOT"
+echo "Images: $IMAGE_ROOT"
 echo "Output: $OUTPUT_DIR"
 echo "Targets: $TARGET_DOMAINS"
 echo "Trials: $N_TRIALS"
@@ -107,6 +113,7 @@ which python
 srun --unbuffered python -u run_nico_guided_optuna.py \
   --txtdir "$TXTLIST_DIR" \
   --dataset "$DATASET" \
+  --image_root "$IMAGE_ROOT" \
   --mask_root "$MASK_ROOT" \
   --output_dir "$OUTPUT_DIR" \
   --target $TARGET_DOMAINS \
