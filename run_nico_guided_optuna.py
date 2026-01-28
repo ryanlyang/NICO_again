@@ -10,6 +10,7 @@ import time
 import copy
 import json
 import csv
+import math
 import argparse
 import random
 
@@ -29,15 +30,13 @@ except Exception as exc:
     raise SystemExit("optuna is required for this script. Install it in your env.") from exc
 
 # =============================================================================
-# BASE HYPERPARAMETERS (Table 2 defaults)
+# BASE HYPERPARAMETERS (Table 9 protocol / DomainBed)
 # =============================================================================
-BATCH_SIZE = 192
-NUM_EPOCHS = 30
-MOMENTUM = 0.9
-GAMMA = 0.1
-WEIGHT_DECAY = 0.001
+BATCH_SIZE = 32
+TOTAL_STEPS = 10000
+WEIGHT_DECAY = 0.0
 
-DEFAULT_ATTENTION_EPOCH = 15
+DEFAULT_ATTENTION_EPOCH = 15  # will be clamped to [1, num_epochs-1]
 DEFAULT_KL_LAMBDA_START = 15.0
 DEFAULT_KL_INCREMENT = 1.5
 VAL_SPLIT_RATIO = 0.16
@@ -264,7 +263,11 @@ def build_train_val_datasets(args, sources, data_transforms, generator):
 # =============================================================================
 
 def make_cam_model(num_classes):
-    base = models.resnet50(pretrained=True)
+    try:
+        weights = models.ResNet50_Weights.IMAGENET1K_V1
+        base = models.resnet50(weights=weights)
+    except AttributeError:
+        base = models.resnet50(pretrained=True)
     num_features = base.fc.in_features
     base.fc = nn.Linear(num_features, num_classes)
 
@@ -318,15 +321,15 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
     best_wts = copy.deepcopy(model.state_dict())
     best_val_acc = -1.0
 
-    opt = optim.SGD(model.parameters(), lr=args.pre_lr, momentum=MOMENTUM, weight_decay=args.weight_decay)
-    sch = optim.lr_scheduler.StepLR(opt, step_size=args.attention_epoch, gamma=GAMMA)
+    opt = optim.Adam(model.parameters(), lr=args.pre_lr, weight_decay=args.weight_decay)
+    sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
 
     kl_lambda_real = args.kl_lambda_start
 
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(args.num_epochs):
         if epoch == args.attention_epoch:
-            opt = optim.SGD(model.parameters(), lr=args.post_lr, momentum=MOMENTUM, weight_decay=args.weight_decay)
-            sch = optim.lr_scheduler.StepLR(opt, step_size=args.attention_epoch, gamma=GAMMA)
+            opt = optim.Adam(model.parameters(), lr=args.post_lr, weight_decay=args.weight_decay)
+            sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
             best_wts = copy.deepcopy(model.state_dict())
             best_val_acc = -1.0
 
@@ -503,11 +506,11 @@ def main():
     parser.add_argument('--load_if_exists', action='store_true', help='Reuse study if it exists')
 
     # Search space (set min=max to fix a value)
-    parser.add_argument('--pre_lr_low', type=float, default=5e-4)
-    parser.add_argument('--pre_lr_high', type=float, default=5e-2)
+    parser.add_argument('--pre_lr_low', type=float, default=1e-5)
+    parser.add_argument('--pre_lr_high', type=float, default=3e-4)
     parser.add_argument('--post_lr_ratio_low', type=float, default=0.05)
     parser.add_argument('--post_lr_ratio_high', type=float, default=0.5)
-    parser.add_argument('--att_epoch_min', type=int, default=5)
+    parser.add_argument('--att_epoch_min', type=int, default=1)
     parser.add_argument('--att_epoch_max', type=int, default=25)
     parser.add_argument('--kl_start_low', type=float, default=5.0)
     parser.add_argument('--kl_start_high', type=float, default=30.0)
@@ -558,6 +561,12 @@ def main():
         'val': len(val_dataset),
     }
 
+    steps_per_epoch = max(1, math.ceil(dataset_sizes['train'] / BATCH_SIZE))
+    num_epochs = max(1, math.ceil(TOTAL_STEPS / steps_per_epoch))
+    args.num_epochs = num_epochs
+    if args.att_epoch_max > args.num_epochs - 1:
+        args.att_epoch_max = max(1, args.num_epochs - 1)
+
     if not has_val:
         print(f"Val split: {int(VAL_SPLIT_RATIO*100)}% split from train (no *_val.txt found)")
 
@@ -607,13 +616,14 @@ def main():
             writer.writerow(row)
 
     def objective(trial):
-        print(f"[TRIAL {trial.number}] start params={trial.params}", flush=True)
         pre_lr = suggest_loguniform(trial, 'pre_lr', args.pre_lr_low, args.pre_lr_high)
         post_ratio = suggest_loguniform(trial, 'post_lr_ratio', args.post_lr_ratio_low, args.post_lr_ratio_high)
         post_lr = pre_lr * post_ratio
         attention_epoch = suggest_int(trial, 'attention_epoch', args.att_epoch_min, args.att_epoch_max)
         kl_lambda_start = suggest_uniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
         kl_increment = kl_lambda_start / 10.0
+        attention_epoch = min(attention_epoch, max(1, args.num_epochs - 1))
+        print(f\"[TRIAL {trial.number}] start params={{'pre_lr': {pre_lr}, 'post_lr': {post_lr}, 'attention_epoch': {attention_epoch}, 'kl_lambda_start': {kl_lambda_start}}}\", flush=True)
 
         trial_seed = args.seed + trial.number
         seed_everything(trial_seed)
@@ -635,7 +645,8 @@ def main():
             weight_decay=WEIGHT_DECAY,
             attention_epoch=attention_epoch,
             kl_lambda_start=kl_lambda_start,
-            kl_increment=kl_increment
+            kl_increment=kl_increment,
+            num_epochs=args.num_epochs
         )
 
         try:
