@@ -623,7 +623,7 @@ def main():
         kl_lambda_start = suggest_uniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
         kl_increment = kl_lambda_start / 10.0
         attention_epoch = min(attention_epoch, max(1, args.num_epochs - 1))
-        print(f\"[TRIAL {trial.number}] start params={{'pre_lr': {pre_lr}, 'post_lr': {post_lr}, 'attention_epoch': {attention_epoch}, 'kl_lambda_start': {kl_lambda_start}}}\", flush=True)
+        print(f"[TRIAL {trial.number}] start params={{'pre_lr': {pre_lr}, 'post_lr': {post_lr}, 'attention_epoch': {attention_epoch}, 'kl_lambda_start': {kl_lambda_start}}}", flush=True)
 
         trial_seed = args.seed + trial.number
         seed_everything(trial_seed)
