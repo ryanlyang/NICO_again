@@ -9,6 +9,7 @@ import os
 import time
 import copy
 import json
+import csv
 import argparse
 import random
 
@@ -589,7 +590,24 @@ def main():
         load_if_exists=args.load_if_exists
     )
 
+    trial_log_path = os.path.join(output_dir, "optuna_trials.csv")
+
+    def log_trial(trial, best_val_acc, test_results):
+        row = {
+            "trial": trial.number,
+            "best_val_acc": best_val_acc,
+            "test_results": json.dumps(test_results),
+            "params": json.dumps(trial.params),
+        }
+        write_header = not os.path.exists(trial_log_path)
+        with open(trial_log_path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+
     def objective(trial):
+        print(f"[TRIAL {trial.number}] start params={trial.params}", flush=True)
         pre_lr = suggest_loguniform(trial, 'pre_lr', args.pre_lr_low, args.pre_lr_high)
         post_ratio = suggest_loguniform(trial, 'post_lr_ratio', args.post_lr_ratio_low, args.post_lr_ratio_high)
         post_lr = pre_lr * post_ratio
@@ -625,6 +643,8 @@ def main():
             test_results = evaluate_test(model, test_loaders, args.target)
             if trial is not None:
                 trial.set_user_attr("test_results", test_results)
+            log_trial(trial, best_val_acc, test_results)
+            print(f"[TRIAL {trial.number}] done best_val_acc={best_val_acc:.6f} test={test_results}", flush=True)
         finally:
             del model
             if torch.cuda.is_available():
@@ -634,9 +654,11 @@ def main():
 
     study.optimize(objective, n_trials=args.n_trials, timeout=args.timeout)
 
+    best_trial = study.best_trial
     best = {
         'best_value': study.best_value,
         'best_params': study.best_params,
+        'best_test_results': best_trial.user_attrs.get("test_results", None),
         'n_trials': len(study.trials)
     }
 
@@ -646,6 +668,10 @@ def main():
 
     print("Best validation accuracy:", study.best_value)
     print("Best params:", study.best_params)
+    if best["best_test_results"] is not None:
+        print("Best trial test results:", best["best_test_results"])
+    else:
+        print("Best trial test results: not found in trial user_attrs")
     print("Saved:", best_path)
 
 
