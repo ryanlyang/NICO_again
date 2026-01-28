@@ -40,6 +40,8 @@ DEFAULT_KL_INCREMENT = 1.5
 VAL_SPLIT_RATIO = 0.16
 
 SEED = 59
+DEFAULT_TXTLIST_DIR = "/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist"
+DEFAULT_MASK_ROOT = "/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap"
 ALL_DOMAINS = ["autumn", "rock", "dim", "grass", "outdoor", "water"]
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -168,22 +170,15 @@ class NICOWithMasks(Dataset):
         Image path: NICO_dataset/autumn/airplane/autumn_0000001.jpg
         Mask path:  {mask_root}/autumn_airplane_autumn_0000001.png
         """
-        if 'NICO_dataset' in img_path:
-            rel_path = img_path.split('NICO_dataset/')[-1]
-            parts = rel_path.split('/')
-
-            if len(parts) == 3:
-                domain = parts[0]
-                class_name = parts[1]
-                filename = parts[2]
-
-                basename = os.path.splitext(filename)[0]
-                mask_filename = f"{domain}_{class_name}_{basename}.png"
-                mask_path = os.path.join(self.mask_root, mask_filename)
-            else:
-                basename = os.path.basename(img_path)
-                basename = os.path.splitext(basename)[0] + '.png'
-                mask_path = os.path.join(self.mask_root, basename)
+        norm_path = os.path.normpath(img_path)
+        parts = norm_path.split(os.sep)
+        if len(parts) >= 3:
+            domain = parts[-3]
+            class_name = parts[-2]
+            filename = parts[-1]
+            basename = os.path.splitext(filename)[0]
+            mask_filename = f"{domain}_{class_name}_{basename}.png"
+            mask_path = os.path.join(self.mask_root, mask_filename)
         else:
             basename = os.path.basename(img_path)
             basename = os.path.splitext(basename)[0] + '.png'
@@ -477,11 +472,11 @@ def evaluate_test(model, test_loaders, target_domains):
 def main():
     parser = argparse.ArgumentParser(description='Guided CNN on NICO++ (official splits)')
 
-    parser.add_argument('--txtdir', type=str, required=True, help='Path to txt lists')
+    parser.add_argument('--txtdir', type=str, default=DEFAULT_TXTLIST_DIR, help='Path to txt lists')
     parser.add_argument('--dataset', type=str, default='NICO', help='Dataset name')
     parser.add_argument('--target', nargs='+', required=True, help='Target domains')
     parser.add_argument('--num_classes', type=int, default=60, help='Number of classes')
-    parser.add_argument('--mask_root', type=str, required=True, help='Path to mask directory')
+    parser.add_argument('--mask_root', type=str, default=DEFAULT_MASK_ROOT, help='Path to mask directory')
 
     parser.add_argument('--output_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--num_workers', type=int, default=8, help='Number of workers')
