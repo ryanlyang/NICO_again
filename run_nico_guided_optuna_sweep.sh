@@ -59,7 +59,7 @@ N_TRIALS=${N_TRIALS:-1000000}
 TARGET_TAG=${TARGET_TAG:-$(echo "$TARGET_DOMAINS" | tr ' ' '-')}
 STUDY_NAME=${STUDY_NAME:-nico_guided_${TARGET_TAG}}
 
-OPTUNA_STORAGE=${OPTUNA_STORAGE:-}
+OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_${TARGET_TAG}.db}
 
 cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT:${PYTHONPATH:-}"
@@ -75,7 +75,15 @@ fi
 
 EXTRA_ARGS=()
 if [[ -n "$OPTUNA_STORAGE" ]]; then
-  EXTRA_ARGS+=(--storage "$OPTUNA_STORAGE" --study_name "$STUDY_NAME" --load_if_exists)
+  EXTRA_ARGS+=(--storage "$OPTUNA_STORAGE" --study_name "$STUDY_NAME")
+  if [[ "$OPTUNA_STORAGE" == sqlite:///* ]]; then
+    DB_PATH="${OPTUNA_STORAGE#sqlite:///}"
+    if [[ -f "$DB_PATH" ]]; then
+      EXTRA_ARGS+=(--load_if_exists)
+    fi
+  else
+    EXTRA_ARGS+=(--load_if_exists)
+  fi
 fi
 
 echo "[$(date)] Host: $(hostname)"

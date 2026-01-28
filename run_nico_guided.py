@@ -400,14 +400,6 @@ def train_model(model, dataloaders, dataset_sizes, test_loaders, args):
                     best_wts = copy.deepcopy(model.state_dict())
                     print("         -> New best model saved based on val accuracy!")
 
-        if epoch >= args.attention_epoch:
-            print(f"\n*** Evaluating on test domains at epoch {epoch + 1} ***")
-            test_results_epoch = evaluate_test(model, test_loaders, args.target)
-            print(f"Epoch {epoch + 1} Test Results:")
-            for domain, acc in test_results_epoch.items():
-                print(f"  {domain}: {acc:.2f}%")
-            print()
-
     time_elapsed = time.time() - since
     print(f"Training complete in {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s")
     print(f"Best val acc: {best_val_acc:.4f}")

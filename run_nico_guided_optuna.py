@@ -390,6 +390,51 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
 
 
 # =============================================================================
+# EVALUATION
+# =============================================================================
+
+@torch.no_grad()
+def evaluate_test(model, test_loaders, target_domains):
+    model.eval()
+    criterion = nn.CrossEntropyLoss()
+
+    results = {}
+    all_correct = 0
+    all_total = 0
+
+    for test_loader, domain_name in zip(test_loaders, target_domains):
+        total, correct, total_loss = 0, 0, 0.0
+
+        for batch in test_loader:
+            if len(batch) == 4:
+                images, labels, _, _ = batch
+            else:
+                images, labels = batch
+
+            images = images.to(DEVICE)
+            labels = labels.to(DEVICE)
+
+            outputs, _ = model(images)
+            loss = criterion(outputs, labels)
+
+            total_loss += loss.item() * images.size(0)
+            preds = outputs.argmax(dim=1)
+            correct += (preds == labels).sum().item()
+            total += images.size(0)
+
+        _ = total_loss / max(total, 1)
+        acc = 100.0 * correct / max(total, 1)
+
+        results[domain_name] = acc
+        all_correct += correct
+        all_total += total
+
+    overall_acc = 100.0 * all_correct / max(all_total, 1)
+    results['overall'] = overall_acc
+    return results
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -437,14 +482,10 @@ def main():
     parser.add_argument('--pre_lr_high', type=float, default=5e-2)
     parser.add_argument('--post_lr_ratio_low', type=float, default=0.05)
     parser.add_argument('--post_lr_ratio_high', type=float, default=0.5)
-    parser.add_argument('--wd_low', type=float, default=1e-6)
-    parser.add_argument('--wd_high', type=float, default=1e-2)
     parser.add_argument('--att_epoch_min', type=int, default=5)
     parser.add_argument('--att_epoch_max', type=int, default=25)
     parser.add_argument('--kl_start_low', type=float, default=5.0)
     parser.add_argument('--kl_start_high', type=float, default=30.0)
-    parser.add_argument('--kl_inc_low', type=float, default=0.5)
-    parser.add_argument('--kl_inc_high', type=float, default=5.0)
 
     args = parser.parse_args()
 
@@ -495,6 +536,22 @@ def main():
     if not has_val:
         print(f"Val split: {int(VAL_SPLIT_RATIO*100)}% split from train (no *_val.txt found)")
 
+    test_datasets = [
+        NICOWithMasks(
+            args.txtdir, args.dataset, [domain], "test",
+            args.mask_root,
+            data_transforms['eval'],
+            None
+        )
+        for domain in args.target
+    ]
+
+    test_loaders = [
+        DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False,
+                   num_workers=args.num_workers, worker_init_fn=seed_worker, generator=base_g)
+        for ds in test_datasets
+    ]
+
     sampler = optuna.samplers.TPESampler(seed=args.optuna_seed)
     pruner = optuna.pruners.MedianPruner(n_warmup_steps=5)
 
@@ -511,10 +568,9 @@ def main():
         pre_lr = suggest_loguniform(trial, 'pre_lr', args.pre_lr_low, args.pre_lr_high)
         post_ratio = suggest_loguniform(trial, 'post_lr_ratio', args.post_lr_ratio_low, args.post_lr_ratio_high)
         post_lr = pre_lr * post_ratio
-        weight_decay = suggest_loguniform(trial, 'weight_decay', args.wd_low, args.wd_high)
         attention_epoch = suggest_int(trial, 'attention_epoch', args.att_epoch_min, args.att_epoch_max)
         kl_lambda_start = suggest_uniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
-        kl_increment = suggest_uniform(trial, 'kl_increment', args.kl_inc_low, args.kl_inc_high)
+        kl_increment = kl_lambda_start / 10.0
 
         trial_seed = args.seed + trial.number
         seed_everything(trial_seed)
@@ -533,7 +589,7 @@ def main():
         trial_args = argparse.Namespace(
             pre_lr=pre_lr,
             post_lr=post_lr,
-            weight_decay=weight_decay,
+            weight_decay=WEIGHT_DECAY,
             attention_epoch=attention_epoch,
             kl_lambda_start=kl_lambda_start,
             kl_increment=kl_increment
@@ -541,6 +597,9 @@ def main():
 
         try:
             best_val_acc = train_one_trial(model, dataloaders, dataset_sizes, trial_args, trial=trial)
+            test_results = evaluate_test(model, test_loaders, args.target)
+            if trial is not None:
+                trial.set_user_attr("test_results", test_results)
         finally:
             del model
             if torch.cuda.is_available():
