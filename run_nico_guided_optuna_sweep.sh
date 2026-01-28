@@ -46,7 +46,7 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export PYTHONNOUSERSITE=1
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=${REPO_ROOT:-/home/ryreu/guided_cnn/NICO_again/NICO_again}
 
 TXTLIST_DIR=${TXTLIST_DIR:-/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist}
 MASK_ROOT=${MASK_ROOT:-/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap}
@@ -61,6 +61,10 @@ STUDY_NAME=${STUDY_NAME:-nico_guided_${TARGET_TAG}}
 
 OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_${TARGET_TAG}.db}
 
+if [[ ! -d "$REPO_ROOT" ]]; then
+  echo "Missing REPO_ROOT: $REPO_ROOT" >&2
+  exit 1
+fi
 cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT:${PYTHONPATH:-}"
 
@@ -70,6 +74,10 @@ if [[ ! -d "$TXTLIST_DIR/$DATASET" ]]; then
 fi
 if [[ ! -d "$MASK_ROOT" ]]; then
   echo "Missing MASK_ROOT: $MASK_ROOT" >&2
+  exit 1
+fi
+if [[ ! -f "$REPO_ROOT/run_nico_guided_optuna.py" ]]; then
+  echo "Missing run_nico_guided_optuna.py in $REPO_ROOT" >&2
   exit 1
 fi
 
