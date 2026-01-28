@@ -1,11 +1,11 @@
 #!/bin/bash -l
 #SBATCH --account=reu-aisocial
-#SBATCH --partition=debug
+#SBATCH --partition=tier3
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=1-00:00:00
+#SBATCH --time=5-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --output=logsNICO/nico_optuna_%j.out
 #SBATCH --error=logsNICO/nico_optuna_%j.err
 #SBATCH --signal=TERM@120
