@@ -3,7 +3,7 @@ domainbed/data/*
 train_output/*
 garbage*/*
 logs*/*
-*.sh
+
 *.pyc
 .DS_Store
 nni_config*/*
