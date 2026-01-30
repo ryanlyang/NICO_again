@@ -2,12 +2,12 @@
 #SBATCH --account=reu-aisocial
 #SBATCH --partition=tier3
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=7-00:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=128G
-#SBATCH --output=logsNICO/nico_swap_optuna_%j.out
-#SBATCH --error=logsNICO/nico_swap_optuna_%j.err
+#SBATCH --mem=64G
+#SBATCH --output=logsNICO/nico_optim_lambda_%j.out
+#SBATCH --error=logsNICO/nico_optim_lambda_%j.err
 #SBATCH --signal=TERM@120
 
 set -Eeuo pipefail
@@ -52,15 +52,15 @@ TXTLIST_DIR=${TXTLIST_DIR:-/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist}
 MASK_ROOT=${MASK_ROOT:-/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap}
 OUTPUT_DIR=${OUTPUT_DIR:-/home/ryreu/guided_cnn/NICO_runs/output}
 IMAGE_ROOT=${IMAGE_ROOT:-/home/ryreu/guided_cnn/code/NICO-plus/data/Unzip_DG_Bench/DG_Benchmark/NICO_DG}
-TARGET_DOMAINS=${TARGET_DOMAINS:?Set TARGET_DOMAINS (e.g., "autumn rock")}
+TARGET_DOMAINS=${TARGET_DOMAINS:?Set TARGET_DOMAINS (e.g., "autumn")}
 
 DATASET=${DATASET:-NICO}
 TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-86400}
 N_TRIALS=${N_TRIALS:-1000000}
 TARGET_TAG=${TARGET_TAG:-$(echo "$TARGET_DOMAINS" | tr ' ' '-')}
-STUDY_NAME=${STUDY_NAME:-nico_guided_${TARGET_TAG}}
+STUDY_NAME=${STUDY_NAME:-nico_guided_optim_lambda_${TARGET_TAG}}
 
-OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_${TARGET_TAG}.db}
+OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_optim_lambda_${TARGET_TAG}.db}
 
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Missing REPO_ROOT: $REPO_ROOT" >&2
@@ -81,8 +81,8 @@ if [[ ! -d "$IMAGE_ROOT" ]]; then
   echo "Missing IMAGE_ROOT: $IMAGE_ROOT" >&2
   exit 1
 fi
-if [[ ! -f "$REPO_ROOT/run_nico_guided_optuna.py" ]]; then
-  echo "Missing run_nico_guided_optuna.py in $REPO_ROOT" >&2
+if [[ ! -f "$REPO_ROOT/run_nico_guided_optim_lambda.py" ]]; then
+  echo "Missing run_nico_guided_optim_lambda.py in $REPO_ROOT" >&2
   exit 1
 fi
 
@@ -110,7 +110,7 @@ echo "Trials: $N_TRIALS"
 echo "Timeout: $TIMEOUT_SECONDS"
 which python
 
-srun --unbuffered python -u run_nico_guided_optuna.py \
+srun --unbuffered python -u run_nico_guided_optim_lambda.py \
   --txtdir "$TXTLIST_DIR" \
   --dataset "$DATASET" \
   --image_root "$IMAGE_ROOT" \

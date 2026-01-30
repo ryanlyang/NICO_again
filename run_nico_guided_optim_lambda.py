@@ -3,6 +3,7 @@
 Optuna hyperparameter search for guided CNN on NICO++ (official splits).
 - Target domains are provided at runtime; source domains are remaining ones.
 - Objective: maximize validation accuracy on official val split.
+- attention_epoch is fixed to 0; optimize lr1, lr2, kl_lambda, kl_increment.
 """
 
 import os
@@ -36,9 +37,8 @@ BATCH_SIZE = 32
 TOTAL_STEPS = 10000
 WEIGHT_DECAY = 0.0
 
-DEFAULT_ATTENTION_EPOCH = 15  # will be clamped to [1, num_epochs-1]
+FIXED_ATTENTION_EPOCH = 0
 DEFAULT_KL_LAMBDA_START = 15.0
-DEFAULT_KL_INCREMENT = 1.5
 VAL_SPLIT_RATIO = 0.16
 
 SEED = 59
@@ -292,7 +292,7 @@ def make_cam_model(num_classes):
 # LOSS FUNCTION
 # =============================================================================
 
-def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_attn):
+def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_ce):
     ce_loss = nn.functional.cross_entropy(outputs, labels)
 
     B, C, Hf, Wf = cams.shape
@@ -307,8 +307,8 @@ def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_attn):
     kl_div = nn.KLDivLoss(reduction='batchmean')
     attn_loss = kl_div(log_p, gt_prob)
 
-    if only_attn:
-        return attn_loss, attn_loss
+    if only_ce:
+        return ce_loss, attn_loss
     else:
         return ce_loss + kl_lambda * attn_loss, attn_loss
 
@@ -325,13 +325,18 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
     sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
 
     kl_lambda_real = args.kl_lambda_start
+    if args.num_epochs <= 1:
+        lr_switch_epoch = args.attention_epoch
+    else:
+        lr_switch_epoch = max(1, args.attention_epoch)
 
     for epoch in range(args.num_epochs):
-        if epoch == args.attention_epoch:
+        if epoch == lr_switch_epoch:
             opt = optim.Adam(model.parameters(), lr=args.post_lr, weight_decay=args.weight_decay)
             sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
-            best_wts = copy.deepcopy(model.state_dict())
-            best_val_acc = -1.0
+            if args.attention_epoch > 0 and epoch == args.attention_epoch:
+                best_wts = copy.deepcopy(model.state_dict())
+                best_val_acc = -1.0
 
         if epoch > args.attention_epoch:
             kl_lambda_real += args.kl_increment
@@ -379,7 +384,7 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
                             feats,
                             gt_small,
                             kl_lambda=333,
-                            only_attn=True
+                            only_ce=True
                         )
                     else:
                         loss, attn_loss = compute_loss(
@@ -387,7 +392,7 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
                             feats,
                             gt_small,
                             kl_lambda=kl_lambda_real,
-                            only_attn=False
+                            only_ce=False
                         )
 
                     if is_train:
@@ -508,12 +513,12 @@ def main():
     # Search space (set min=max to fix a value)
     parser.add_argument('--pre_lr_low', type=float, default=1e-5)
     parser.add_argument('--pre_lr_high', type=float, default=3e-4)
-    parser.add_argument('--post_lr_ratio_low', type=float, default=0.05)
-    parser.add_argument('--post_lr_ratio_high', type=float, default=0.5)
-    parser.add_argument('--att_epoch_min', type=int, default=1)
-    parser.add_argument('--att_epoch_max', type=int, default=25)
+    parser.add_argument('--post_lr_low', type=float, default=5e-7)
+    parser.add_argument('--post_lr_high', type=float, default=1.5e-4)
     parser.add_argument('--kl_start_low', type=float, default=5.0)
     parser.add_argument('--kl_start_high', type=float, default=30.0)
+    parser.add_argument('--kl_inc_low', type=float, default=0.5)
+    parser.add_argument('--kl_inc_high', type=float, default=3.0)
 
     args = parser.parse_args()
 
@@ -564,8 +569,7 @@ def main():
     steps_per_epoch = max(1, math.ceil(dataset_sizes['train'] / BATCH_SIZE))
     num_epochs = max(1, math.ceil(TOTAL_STEPS / steps_per_epoch))
     args.num_epochs = num_epochs
-    if args.att_epoch_max > args.num_epochs - 1:
-        args.att_epoch_max = max(1, args.num_epochs - 1)
+    args.attention_epoch = min(FIXED_ATTENTION_EPOCH, max(0, args.num_epochs - 1))
 
     if not has_val:
         print(f"Val split: {int(VAL_SPLIT_RATIO*100)}% split from train (no *_val.txt found)")
@@ -617,13 +621,11 @@ def main():
 
     def objective(trial):
         pre_lr = suggest_loguniform(trial, 'pre_lr', args.pre_lr_low, args.pre_lr_high)
-        post_ratio = suggest_loguniform(trial, 'post_lr_ratio', args.post_lr_ratio_low, args.post_lr_ratio_high)
-        post_lr = pre_lr * post_ratio
-        attention_epoch = suggest_int(trial, 'attention_epoch', args.att_epoch_min, args.att_epoch_max)
+        post_lr = suggest_loguniform(trial, 'post_lr', args.post_lr_low, args.post_lr_high)
+        attention_epoch = args.attention_epoch
         kl_lambda_start = suggest_uniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
-        kl_increment = kl_lambda_start / 10.0
-        attention_epoch = min(attention_epoch, max(1, args.num_epochs - 1))
-        print(f"[TRIAL {trial.number}] start params={{'pre_lr': {pre_lr}, 'post_lr': {post_lr}, 'attention_epoch': {attention_epoch}, 'kl_lambda_start': {kl_lambda_start}}}", flush=True)
+        kl_increment = suggest_uniform(trial, 'kl_increment', args.kl_inc_low, args.kl_inc_high)
+        print(f"[TRIAL {trial.number}] start params={{'pre_lr': {pre_lr}, 'post_lr': {post_lr}, 'attention_epoch': {attention_epoch}, 'kl_lambda_start': {kl_lambda_start}, 'kl_increment': {kl_increment}}}", flush=True)
 
         trial_seed = args.seed + trial.number
         seed_everything(trial_seed)
