@@ -5,7 +5,7 @@
 #SBATCH --time=2-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=128G
+#SBATCH --mem=64G
 #SBATCH --output=logsNICO/nico_swap_optuna_%j.out
 #SBATCH --error=logsNICO/nico_swap_optuna_%j.err
 #SBATCH --signal=TERM@120
