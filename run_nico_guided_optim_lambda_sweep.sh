@@ -61,6 +61,7 @@ TARGET_TAG=${TARGET_TAG:-$(echo "$TARGET_DOMAINS" | tr ' ' '-')}
 STUDY_NAME=${STUDY_NAME:-nico_guided_optim_lambda_${TARGET_TAG}}
 
 OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_optim_lambda_${TARGET_TAG}.db}
+FRESH_START=${FRESH_START:-1}
 
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Missing REPO_ROOT: $REPO_ROOT" >&2
@@ -91,11 +92,15 @@ if [[ -n "$OPTUNA_STORAGE" ]]; then
   EXTRA_ARGS+=(--storage "$OPTUNA_STORAGE" --study_name "$STUDY_NAME")
   if [[ "$OPTUNA_STORAGE" == sqlite:///* ]]; then
     DB_PATH="${OPTUNA_STORAGE#sqlite:///}"
-    if [[ -f "$DB_PATH" ]]; then
+    if [[ "$FRESH_START" -eq 1 ]]; then
+      rm -f "$DB_PATH"
+    elif [[ -f "$DB_PATH" ]]; then
       EXTRA_ARGS+=(--load_if_exists)
     fi
   else
-    EXTRA_ARGS+=(--load_if_exists)
+    if [[ "$FRESH_START" -ne 1 ]]; then
+      EXTRA_ARGS+=(--load_if_exists)
+    fi
   fi
 fi
 
