@@ -5,9 +5,9 @@
 #SBATCH --time=1-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=128G
-#SBATCH --output=logsNICO/nico_optuna_multi_seed_%j.out
-#SBATCH --error=logsNICO/nico_optuna_multi_seed_%j.err
+#SBATCH --mem=64G
+#SBATCH --output=logsNICO/nico_swap_multi_seed_%j.out
+#SBATCH --error=logsNICO/nico_swap_multi_seed_%j.err
 #SBATCH --signal=TERM@120
 
 set -Eeuo pipefail
