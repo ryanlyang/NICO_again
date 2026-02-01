@@ -5,7 +5,7 @@
 #SBATCH --time=1-12:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
-#SBATCH --mem=128G
+#SBATCH --mem=64G
 #SBATCH --output=logsNICO/nico_optim_lambda_multi_seed_%j.out
 #SBATCH --error=logsNICO/nico_optim_lambda_multi_seed_%j.err
 #SBATCH --signal=TERM@120
