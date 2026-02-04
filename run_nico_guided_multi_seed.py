@@ -30,7 +30,9 @@ BATCH_SIZE = 32
 TOTAL_STEPS = 10000
 FIXED_NUM_EPOCHS = 30
 FORCE_ATTENTION_EPOCH = 15
-FORCE_KL_LAMBDA_START = 10.0
+FORCE_KL_LAMBDA_START = 50.0
+FORCE_PRE_LR = 0.0001111423123758101
+FORCE_POST_LR = 0.0033967314347860904
 WEIGHT_DECAY = 0.0
 VAL_SPLIT_RATIO = 0.16
 
@@ -519,8 +521,8 @@ def main():
         sources = [d for d in ALL_DOMAINS if d != domain]
 
         hp = DOMAIN_BEST[domain]
-        pre_lr = hp["pre_lr"]
-        post_lr = pre_lr * hp["post_lr_ratio"]
+        pre_lr = FORCE_PRE_LR
+        post_lr = FORCE_POST_LR
         attention_epoch = FORCE_ATTENTION_EPOCH
         kl_lambda_start = FORCE_KL_LAMBDA_START
         kl_increment = kl_lambda_start / 10.0
