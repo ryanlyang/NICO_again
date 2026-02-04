@@ -35,6 +35,7 @@ FORCE_PRE_LR = 1e-5
 FORCE_POST_LR = 3e-5
 WEIGHT_DECAY = 0.0
 VAL_SPLIT_RATIO = 0.16
+BETA = 0.1
 
 DEFAULT_TXTLIST_DIR = "/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist"
 DEFAULT_MASK_ROOT = "/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap"
@@ -259,6 +260,20 @@ def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_ce):
         return ce_loss + kl_lambda * attn_loss, attn_loss
 
 
+def compute_attn_losses(cams, gt_masks):
+    B, Hf, Wf = cams.shape
+    cam_flat = cams.view(B, -1)
+    gt_flat = gt_masks.view(B, -1)
+    log_cam = nn.functional.log_softmax(cam_flat, dim=1)
+    cam_prob = nn.functional.softmax(cam_flat, dim=1)
+    gt_prob = gt_flat / (gt_flat.sum(dim=1, keepdim=True) + 1e-8)
+    log_gt = torch.log(gt_prob + 1e-8)
+    kl_div = nn.KLDivLoss(reduction='batchmean')
+    forward_kl = kl_div(log_cam, gt_prob)
+    reverse_kl = kl_div(log_gt, cam_prob)
+    return forward_kl, reverse_kl
+
+
 # =============================================================================
 # TRAIN / EVAL
 # =============================================================================
@@ -268,6 +283,9 @@ def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, ta
     best_val_acc = -1.0
     best_test_acc = -1.0
     best_test_epoch = -1
+    best_optim_value = -1.0
+    best_optim_epoch = -1
+    best_val_epoch = -1
 
     opt = optim.Adam(model.parameters(), lr=args.pre_lr, weight_decay=WEIGHT_DECAY)
     sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
@@ -289,6 +307,8 @@ def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, ta
             model.train() if is_train else model.eval()
 
             running_corrects = 0
+            running_attn_rev = 0.0
+            total = 0
 
             for batch in dataloaders[phase]:
                 inputs, labels, gt_masks, _ = batch
@@ -341,15 +361,31 @@ def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, ta
                         opt.step()
 
                 running_corrects += torch.sum(preds == labels.data)
+                total += inputs.size(0)
+
+                if not is_train:
+                    fwd_kl, rev_kl = compute_attn_losses(sal_norm, gt_small)
+                    running_attn_rev += rev_kl.item() * inputs.size(0)
 
             if is_train:
                 sch.step()
 
             if phase == 'val':
-                epoch_acc = running_corrects.double() / dataset_sizes['val']
+                epoch_acc = running_corrects.double() / max(total, 1)
+                epoch_attn_rev = running_attn_rev / max(total, 1)
+                optim_value = float(epoch_acc) * math.exp(-BETA * epoch_attn_rev)
+                print(
+                    f"[Epoch {epoch}] val_acc={float(epoch_acc):.6f} "
+                    f"optim_value={optim_value:.6f} attn_rev={epoch_attn_rev:.6f}",
+                    flush=True
+                )
+                if optim_value > best_optim_value:
+                    best_optim_value = optim_value
+                    best_optim_epoch = epoch
                 if epoch_acc > best_val_acc:
                     best_val_acc = epoch_acc
                     best_wts = copy.deepcopy(model.state_dict())
+                    best_val_epoch = epoch
 
                 if test_loaders is not None and target_domains is not None:
                     test_results = evaluate_test(model, test_loaders, target_domains)
@@ -360,7 +396,14 @@ def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, ta
                         best_test_epoch = epoch
 
     model.load_state_dict(best_wts)
-    return float(best_val_acc), float(best_test_acc), int(best_test_epoch)
+    return (
+        float(best_val_acc),
+        int(best_val_epoch),
+        float(best_test_acc),
+        int(best_test_epoch),
+        float(best_optim_value),
+        int(best_optim_epoch),
+    )
 
 
 @torch.no_grad()
@@ -508,7 +551,8 @@ def main():
     summary_header = [
         "domain", "seed", "pre_lr", "post_lr", "attention_epoch",
         "kl_lambda_start", "kl_increment", "best_val_acc", "test_acc",
-        "best_test_acc", "best_test_epoch"
+        "best_test_acc", "best_test_epoch", "best_val_epoch",
+        "best_optim_value", "best_optim_epoch"
     ]
     if not os.path.exists(summary_path):
         with open(summary_path, "w", newline="") as f:
@@ -586,7 +630,7 @@ def main():
             )
 
             start = time.time()
-            best_val_acc, best_test_acc, best_test_epoch = train_one_run(
+            best_val_acc, best_val_epoch, best_test_acc, best_test_epoch, best_optim_value, best_optim_epoch = train_one_run(
                 model, dataloaders, dataset_sizes, run_args,
                 test_loaders=test_loaders, target_domains=[domain]
             )
@@ -601,6 +645,12 @@ def main():
             print(
                 f"[Domain {domain} | Seed {seed}] Best test (oracle) "
                 f"{best_test_acc:.6f} at epoch {best_test_epoch}",
+                flush=True
+            )
+            print(
+                f"[Domain {domain} | Seed {seed}] Best val_acc "
+                f"{best_val_acc:.6f} at epoch {best_val_epoch} | "
+                f"Best optim_value {best_optim_value:.6f} at epoch {best_optim_epoch}",
                 flush=True
             )
 
@@ -618,6 +668,9 @@ def main():
                     test_results.get(domain, None),
                     best_test_acc,
                     best_test_epoch,
+                    best_val_epoch,
+                    best_optim_value,
+                    best_optim_epoch,
                 ])
 
 
