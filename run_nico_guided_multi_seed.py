@@ -590,6 +590,11 @@ def main():
                 f"test={test_results} best_test={best_test_acc:.6f}@{best_test_epoch} "
                 f"time={elapsed/60:.1f}m"
             )
+            print(
+                f"[Domain {domain} | Seed {seed}] Best test (oracle) "
+                f"{best_test_acc:.6f} at epoch {best_test_epoch}",
+                flush=True
+            )
 
             with open(summary_path, "a", newline="") as f:
                 writer = csv.writer(f)
