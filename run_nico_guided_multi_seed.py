@@ -600,7 +600,8 @@ def main():
         post_lr = FORCE_POST_LR
         attention_epoch = FORCE_ATTENTION_EPOCH
         kl_lambda_start = FORCE_KL_LAMBDA_START
-        kl_increment = kl_lambda_start / 10.0
+        # kl_increment = kl_lambda_start / 10.0
+        kl_increment = 0
 
         domain_dir = os.path.join(args.output_dir, f"target_{domain}")
         os.makedirs(domain_dir, exist_ok=True)
