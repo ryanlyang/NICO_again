@@ -28,6 +28,9 @@ import torchvision.models as models
 # =============================================================================
 BATCH_SIZE = 32
 TOTAL_STEPS = 10000
+FIXED_NUM_EPOCHS = 30
+FORCE_ATTENTION_EPOCH = 15
+FORCE_KL_LAMBDA_START = 10.0
 WEIGHT_DECAY = 0.0
 VAL_SPLIT_RATIO = 0.16
 
@@ -518,8 +521,8 @@ def main():
         hp = DOMAIN_BEST[domain]
         pre_lr = hp["pre_lr"]
         post_lr = pre_lr * hp["post_lr_ratio"]
-        attention_epoch = hp["attention_epoch"]
-        kl_lambda_start = hp["kl_lambda_start"]
+        attention_epoch = FORCE_ATTENTION_EPOCH
+        kl_lambda_start = FORCE_KL_LAMBDA_START
         kl_increment = kl_lambda_start / 10.0
 
         domain_dir = os.path.join(args.output_dir, f"target_{domain}")
@@ -541,7 +544,10 @@ def main():
                 'val': len(val_dataset),
             }
             steps_per_epoch = max(1, math.ceil(dataset_sizes['train'] / BATCH_SIZE))
-            num_epochs = max(1, math.ceil(TOTAL_STEPS / steps_per_epoch))
+            if FIXED_NUM_EPOCHS is not None:
+                num_epochs = FIXED_NUM_EPOCHS
+            else:
+                num_epochs = max(1, math.ceil(TOTAL_STEPS / steps_per_epoch))
             att_epoch = min(attention_epoch, max(1, num_epochs - 1))
 
             dataloaders = {
