@@ -54,7 +54,7 @@ OUTPUT_DIR=${OUTPUT_DIR:-/home/ryreu/guided_cnn/NICO_runs/seeded_runs}
 DOMAINS=${DOMAINS:-autumn,rock,dim,grass,outdoor,water}
 SEEDS=${SEEDS:-}
 SEED_START=${SEED_START:-59}
-NUM_SEEDS=${NUM_SEEDS:-5}
+NUM_SEEDS=${NUM_SEEDS:-1}
 
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Missing REPO_ROOT: $REPO_ROOT" >&2

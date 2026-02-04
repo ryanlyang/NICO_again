@@ -258,9 +258,11 @@ def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_ce):
 # TRAIN / EVAL
 # =============================================================================
 
-def train_one_run(model, dataloaders, dataset_sizes, args):
+def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, target_domains=None):
     best_wts = copy.deepcopy(model.state_dict())
     best_val_acc = -1.0
+    best_test_acc = -1.0
+    best_test_epoch = -1
 
     opt = optim.Adam(model.parameters(), lr=args.pre_lr, weight_decay=WEIGHT_DECAY)
     sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
@@ -344,8 +346,16 @@ def train_one_run(model, dataloaders, dataset_sizes, args):
                     best_val_acc = epoch_acc
                     best_wts = copy.deepcopy(model.state_dict())
 
+                if test_loaders is not None and target_domains is not None:
+                    test_results = evaluate_test(model, test_loaders, target_domains)
+                    epoch_test_acc = test_results.get(target_domains[0], None)
+                    print(f"[Epoch {epoch}] test={test_results}", flush=True)
+                    if epoch_test_acc is not None and epoch_test_acc > best_test_acc:
+                        best_test_acc = epoch_test_acc
+                        best_test_epoch = epoch
+
     model.load_state_dict(best_wts)
-    return float(best_val_acc)
+    return float(best_val_acc), float(best_test_acc), int(best_test_epoch)
 
 
 @torch.no_grad()
@@ -462,7 +472,7 @@ def main():
     parser.add_argument('--domains', type=str, default=','.join(ALL_DOMAINS), help='Comma-separated target domains')
     parser.add_argument('--seeds', type=str, default='', help='Comma-separated seeds (overrides seed_start/num_seeds)')
     parser.add_argument('--seed_start', type=int, default=59, help='Start seed if --seeds not provided')
-    parser.add_argument('--num_seeds', type=int, default=5, help='Number of seeds if --seeds not provided')
+    parser.add_argument('--num_seeds', type=int, default=1, help='Number of seeds if --seeds not provided')
 
     args = parser.parse_args()
 
@@ -492,7 +502,8 @@ def main():
     summary_path = os.path.join(args.output_dir, "seeded_summary.csv")
     summary_header = [
         "domain", "seed", "pre_lr", "post_lr", "attention_epoch",
-        "kl_lambda_start", "kl_increment", "best_val_acc", "test_acc"
+        "kl_lambda_start", "kl_increment", "best_val_acc", "test_acc",
+        "best_test_acc", "best_test_epoch"
     ]
     if not os.path.exists(summary_path):
         with open(summary_path, "w", newline="") as f:
@@ -567,11 +578,18 @@ def main():
             )
 
             start = time.time()
-            best_val_acc = train_one_run(model, dataloaders, dataset_sizes, run_args)
+            best_val_acc, best_test_acc, best_test_epoch = train_one_run(
+                model, dataloaders, dataset_sizes, run_args,
+                test_loaders=test_loaders, target_domains=[domain]
+            )
             test_results = evaluate_test(model, test_loaders, [domain])
             elapsed = time.time() - start
 
-            print(f"[Domain {domain} | Seed {seed}] best_val_acc={best_val_acc:.6f} test={test_results} time={elapsed/60:.1f}m")
+            print(
+                f"[Domain {domain} | Seed {seed}] best_val_acc={best_val_acc:.6f} "
+                f"test={test_results} best_test={best_test_acc:.6f}@{best_test_epoch} "
+                f"time={elapsed/60:.1f}m"
+            )
 
             with open(summary_path, "a", newline="") as f:
                 writer = csv.writer(f)
@@ -585,6 +603,8 @@ def main():
                     kl_increment,
                     best_val_acc,
                     test_results.get(domain, None),
+                    best_test_acc,
+                    best_test_epoch,
                 ])
 
 
