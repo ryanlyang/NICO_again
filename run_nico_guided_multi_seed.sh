@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --time=1-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=12
 #SBATCH --mem=64G
 #SBATCH --output=logsNICO/nico_multi_seed_%j.out
 #SBATCH --error=logsNICO/nico_multi_seed_%j.err
