@@ -30,12 +30,14 @@ BATCH_SIZE = 32
 TOTAL_STEPS = 10000
 FIXED_NUM_EPOCHS = 30
 FORCE_ATTENTION_EPOCH = 15
-FORCE_KL_LAMBDA_START = 10.0
+FORCE_KL_LAMBDA_START = 1.0
 FORCE_PRE_LR = 1e-5
 FORCE_POST_LR = 3e-5
 WEIGHT_DECAY = 0.0
 VAL_SPLIT_RATIO = 0.16
 BETA = 0.1
+MIN_MASK_FG_RATIO = 0.05
+MAX_MASK_FG_RATIO = 0.95
 
 DEFAULT_TXTLIST_DIR = "/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist"
 DEFAULT_MASK_ROOT = "/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap"
@@ -147,13 +149,17 @@ class NICOWithMasks(Dataset):
         else:
             mask = Image.new('L', image.size, 0)
 
+        mask_arr = np.array(mask)
+        fg_ratio = float((mask_arr > 10).mean())
+        mask_valid = (fg_ratio >= MIN_MASK_FG_RATIO) and (fg_ratio <= MAX_MASK_FG_RATIO)
+
         if self.image_transform is not None:
             if 'RandomResizedCrop' in str(self.image_transform):
                 image, mask = self._apply_train_transforms(image, mask)
             else:
                 image, mask = self._apply_eval_transforms(image, mask)
 
-        return image, label, mask, img_path
+        return image, label, mask, img_path, torch.tensor(mask_valid, dtype=torch.bool)
 
     def _apply_train_transforms(self, image, mask):
         import torchvision.transforms.functional as TF
@@ -244,26 +250,46 @@ def make_cam_model(num_classes):
     return CAMWrapResNet(base)
 
 
-def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_ce):
+def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_ce, mask_valid=None):
     ce_loss = nn.functional.cross_entropy(outputs, labels)
     B, C, Hf, Wf = cams.shape
-    cam_avg = cams.mean(dim=1)
-    cam_flat = cam_avg.view(B, -1)
-    gt_flat = gt_masks.view(B, -1)
-    log_p = nn.functional.log_softmax(cam_flat, dim=1)
-    gt_prob = gt_flat / (gt_flat.sum(dim=1, keepdim=True) + 1e-8)
-    kl_div = nn.KLDivLoss(reduction='batchmean')
-    attn_loss = kl_div(log_p, gt_prob)
+    if mask_valid is None:
+        valid = torch.ones(B, dtype=torch.bool, device=cams.device)
+    else:
+        valid = mask_valid.to(device=cams.device, dtype=torch.bool)
+
+    if valid.any():
+        cam_avg = cams[valid].mean(dim=1)
+        gt_valid = gt_masks[valid]
+        cam_flat = cam_avg.view(cam_avg.size(0), -1)
+        gt_flat = gt_valid.view(gt_valid.size(0), -1)
+        log_p = nn.functional.log_softmax(cam_flat, dim=1)
+        gt_prob = gt_flat / (gt_flat.sum(dim=1, keepdim=True) + 1e-8)
+        kl_div = nn.KLDivLoss(reduction='batchmean')
+        attn_loss = kl_div(log_p, gt_prob)
+    else:
+        attn_loss = torch.tensor(0.0, device=cams.device)
+
     if only_ce:
         return ce_loss, attn_loss
-    else:
-        return ce_loss + kl_lambda * attn_loss, attn_loss
+    return ce_loss + kl_lambda * attn_loss, attn_loss
 
 
-def compute_attn_losses(cams, gt_masks):
+def compute_attn_losses(cams, gt_masks, mask_valid=None):
     B, Hf, Wf = cams.shape
-    cam_flat = cams.view(B, -1)
-    gt_flat = gt_masks.view(B, -1)
+    if mask_valid is None:
+        valid = torch.ones(B, dtype=torch.bool, device=cams.device)
+    else:
+        valid = mask_valid.to(device=cams.device, dtype=torch.bool)
+
+    if not valid.any():
+        zero = torch.tensor(0.0, device=cams.device)
+        return zero, zero
+
+    cams_valid = cams[valid]
+    gt_valid = gt_masks[valid]
+    cam_flat = cams_valid.view(cams_valid.size(0), -1)
+    gt_flat = gt_valid.view(gt_valid.size(0), -1)
     log_cam = nn.functional.log_softmax(cam_flat, dim=1)
     cam_prob = nn.functional.softmax(cam_flat, dim=1)
     gt_prob = gt_flat / (gt_flat.sum(dim=1, keepdim=True) + 1e-8)
@@ -309,12 +335,14 @@ def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, ta
             running_corrects = 0
             running_attn_rev = 0.0
             total = 0
+            running_valid_masks = 0
 
             for batch in dataloaders[phase]:
-                inputs, labels, gt_masks, _ = batch
+                inputs, labels, gt_masks, _, mask_valid = batch
                 inputs = inputs.to(DEVICE)
                 labels = labels.to(DEVICE)
                 gt_masks = gt_masks.to(DEVICE)
+                mask_valid = mask_valid.to(DEVICE)
 
                 if is_train:
                     opt.zero_grad()
@@ -345,7 +373,8 @@ def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, ta
                             feats,
                             gt_small,
                             kl_lambda=333,
-                            only_ce=True
+                            only_ce=True,
+                            mask_valid=mask_valid
                         )
                     else:
                         loss, _ = compute_loss(
@@ -353,7 +382,8 @@ def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, ta
                             feats,
                             gt_small,
                             kl_lambda=kl_lambda_real,
-                            only_ce=False
+                            only_ce=False,
+                            mask_valid=mask_valid
                         )
 
                     if is_train:
@@ -364,19 +394,22 @@ def train_one_run(model, dataloaders, dataset_sizes, args, test_loaders=None, ta
                 total += inputs.size(0)
 
                 if not is_train:
-                    fwd_kl, rev_kl = compute_attn_losses(sal_norm, gt_small)
-                    running_attn_rev += rev_kl.item() * inputs.size(0)
+                    _, rev_kl = compute_attn_losses(sal_norm, gt_small, mask_valid=mask_valid)
+                    valid_count = int(mask_valid.sum().item())
+                    running_attn_rev += rev_kl.item() * valid_count
+                    running_valid_masks += valid_count
 
             if is_train:
                 sch.step()
 
             if phase == 'val':
                 epoch_acc = running_corrects.double() / max(total, 1)
-                epoch_attn_rev = running_attn_rev / max(total, 1)
+                epoch_attn_rev = running_attn_rev / max(running_valid_masks, 1)
                 optim_value = float(epoch_acc) * math.exp(-BETA * epoch_attn_rev)
                 print(
                     f"[Epoch {epoch}] val_acc={float(epoch_acc):.6f} "
-                    f"optim_value={optim_value:.6f} attn_rev={epoch_attn_rev:.6f}",
+                    f"optim_value={optim_value:.6f} attn_rev={epoch_attn_rev:.6f} "
+                    f"valid_masks={running_valid_masks}/{total}",
                     flush=True
                 )
                 if optim_value > best_optim_value:
@@ -416,10 +449,8 @@ def evaluate_test(model, test_loaders, target_domains):
     for test_loader, domain_name in zip(test_loaders, target_domains):
         total, correct = 0, 0
         for batch in test_loader:
-            if len(batch) == 4:
-                images, labels, _, _ = batch
-            else:
-                images, labels = batch
+            images = batch[0]
+            labels = batch[1]
             images = images.to(DEVICE)
             labels = labels.to(DEVICE)
             outputs, _ = model(images)
