@@ -482,6 +482,11 @@ def suggest_int(trial, name, low, high):
         return low
     return trial.suggest_int(name, low, high)
 
+def parse_seeds(seed_start: int, num_seeds: int, seeds_csv: str):
+    if seeds_csv:
+        return [int(s) for s in seeds_csv.split(',') if s.strip()]
+    return list(range(seed_start, seed_start + num_seeds))
+
 
 def main():
     parser = argparse.ArgumentParser(description='Optuna search for Guided CNN on NICO++ (official splits)')
@@ -508,12 +513,20 @@ def main():
     # Search space (set min=max to fix a value)
     parser.add_argument('--pre_lr_low', type=float, default=1e-5)
     parser.add_argument('--pre_lr_high', type=float, default=3e-4)
-    parser.add_argument('--post_lr_ratio_low', type=float, default=0.05)
-    parser.add_argument('--post_lr_ratio_high', type=float, default=0.5)
+    parser.add_argument('--post_lr_low', type=float, default=1e-5)
+    parser.add_argument('--post_lr_high', type=float, default=3e-4)
     parser.add_argument('--att_epoch_min', type=int, default=1)
     parser.add_argument('--att_epoch_max', type=int, default=25)
-    parser.add_argument('--kl_start_low', type=float, default=5.0)
+    parser.add_argument('--kl_start_low', type=float, default=0.1)
     parser.add_argument('--kl_start_high', type=float, default=30.0)
+    parser.add_argument('--kl_inc_low', type=float, default=0.0)
+    parser.add_argument('--kl_inc_high', type=float, default=3.0)
+
+    # After sweep: rerun the best hyperparameters for multiple seeds.
+    parser.add_argument('--rerun_best', type=int, default=1, help='After sweep, rerun best params for multiple seeds (1/0).')
+    parser.add_argument('--rerun_seed_start', type=int, default=59, help='Start seed for reruns (if --rerun_seeds not set).')
+    parser.add_argument('--rerun_num_seeds', type=int, default=5, help='Number of rerun seeds (if --rerun_seeds not set).')
+    parser.add_argument('--rerun_seeds', type=str, default='', help='Comma-separated explicit rerun seeds.')
 
     args = parser.parse_args()
 
@@ -617,13 +630,16 @@ def main():
 
     def objective(trial):
         pre_lr = suggest_loguniform(trial, 'pre_lr', args.pre_lr_low, args.pre_lr_high)
-        post_ratio = suggest_loguniform(trial, 'post_lr_ratio', args.post_lr_ratio_low, args.post_lr_ratio_high)
-        post_lr = pre_lr * post_ratio
+        post_lr = suggest_loguniform(trial, 'post_lr', args.post_lr_low, args.post_lr_high)
         attention_epoch = suggest_int(trial, 'attention_epoch', args.att_epoch_min, args.att_epoch_max)
         kl_lambda_start = suggest_uniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
-        kl_increment = kl_lambda_start / 10.0
+        kl_increment = suggest_uniform(trial, 'kl_increment', args.kl_inc_low, args.kl_inc_high)
         attention_epoch = min(attention_epoch, max(1, args.num_epochs - 1))
-        print(f"[TRIAL {trial.number}] start params={{'pre_lr': {pre_lr}, 'post_lr': {post_lr}, 'attention_epoch': {attention_epoch}, 'kl_lambda_start': {kl_lambda_start}}}", flush=True)
+        print(
+            f"[TRIAL {trial.number}] start params={{'pre_lr': {pre_lr}, 'post_lr': {post_lr}, "
+            f"'attention_epoch': {attention_epoch}, 'kl_lambda_start': {kl_lambda_start}, 'kl_increment': {kl_increment}}}",
+            flush=True
+        )
 
         trial_seed = args.seed + trial.number
         seed_everything(trial_seed)
@@ -684,6 +700,88 @@ def main():
     else:
         print("Best trial test results: not found in trial user_attrs")
     print("Saved:", best_path)
+
+    if int(args.rerun_best) == 1:
+        seeds = parse_seeds(args.rerun_seed_start, args.rerun_num_seeds, args.rerun_seeds)
+
+        best_pre_lr = float(study.best_params['pre_lr'])
+        best_post_lr = float(study.best_params.get('post_lr', best_pre_lr))
+        best_post_lr_ratio = (best_post_lr / best_pre_lr) if best_pre_lr > 0 else float('nan')
+        best_attention_epoch = int(study.best_params['attention_epoch'])
+        best_kl_lambda_start = float(study.best_params['kl_lambda_start'])
+        best_kl_increment = float(study.best_params.get('kl_increment', best_kl_lambda_start / 10.0))
+
+        rerun_path = os.path.join(output_dir, "best_rerun_seeds.csv")
+        rerun_header = [
+            "seed", "pre_lr", "post_lr", "post_lr_ratio", "attention_epoch",
+            "kl_lambda_start", "kl_increment", "best_val_acc", "test_results_json", "minutes"
+        ]
+        write_header = not os.path.exists(rerun_path)
+        if write_header:
+            with open(rerun_path, "w", newline="") as f:
+                csv.writer(f).writerow(rerun_header)
+
+        print(f"\n=== Rerun best params for {len(seeds)} seeds ===", flush=True)
+        print(
+            "Best params resolved: "
+            f"pre_lr={best_pre_lr} post_lr={best_post_lr} att_epoch={best_attention_epoch} "
+            f"kl_start={best_kl_lambda_start} kl_inc={best_kl_increment}",
+            flush=True,
+        )
+
+        for seed in seeds:
+            seed_everything(seed)
+            g = torch.Generator()
+            g.manual_seed(seed)
+
+            dataloaders = {
+                'train': DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,
+                                    num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g),
+                'val': DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False,
+                                  num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g),
+            }
+
+            model = make_cam_model(args.num_classes).to(DEVICE)
+
+            run_args = argparse.Namespace(
+                pre_lr=best_pre_lr,
+                post_lr=best_post_lr,
+                weight_decay=WEIGHT_DECAY,
+                attention_epoch=min(best_attention_epoch, max(1, args.num_epochs - 1)),
+                kl_lambda_start=best_kl_lambda_start,
+                kl_increment=best_kl_increment,
+                num_epochs=args.num_epochs
+            )
+
+            start = time.time()
+            best_val_acc = train_one_trial(model, dataloaders, dataset_sizes, run_args, trial=None)
+            test_results = evaluate_test(model, test_loaders, args.target)
+            minutes = (time.time() - start) / 60.0
+
+            print(
+                f"[RERUN seed={seed}] best_val_acc={best_val_acc:.6f} test={test_results} time={minutes:.1f}m",
+                flush=True,
+            )
+
+            with open(rerun_path, "a", newline="") as f:
+                csv.writer(f).writerow([
+                    seed,
+                    best_pre_lr,
+                    best_post_lr,
+                    best_post_lr_ratio,
+                    best_attention_epoch,
+                    best_kl_lambda_start,
+                    best_kl_increment,
+                    best_val_acc,
+                    json.dumps(test_results),
+                    minutes,
+                ])
+
+            del model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        print("Saved reruns:", rerun_path, flush=True)
 
 
 if __name__ == '__main__':
