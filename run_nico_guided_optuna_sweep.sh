@@ -2,12 +2,12 @@
 #SBATCH --account=reu-aisocial
 #SBATCH --partition=tier3
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=2-00:00:00
+#SBATCH --time=2-10:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=64G
-#SBATCH --output=logsNICO/nico_swap_optuna_%j.out
-#SBATCH --error=logsNICO/nico_swap_optuna_%j.err
+#SBATCH --output=logsNICOoptim/opt_nico_guided_optuna_%j.out
+#SBATCH --error=logsNICOoptim/opt_nico_guided_optuna_%j.err
 #SBATCH --signal=TERM@120
 
 set -Eeuo pipefail

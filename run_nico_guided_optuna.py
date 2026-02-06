@@ -40,11 +40,16 @@ DEFAULT_ATTENTION_EPOCH = 15  # will be clamped to [1, num_epochs-1]
 DEFAULT_KL_LAMBDA_START = 15.0
 DEFAULT_KL_INCREMENT = 1.5
 VAL_SPLIT_RATIO = 0.16
+BETA_DEFAULT = 0.1
 
 SEED = 59
 DEFAULT_TXTLIST_DIR = "/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist"
 DEFAULT_MASK_ROOT = "/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap"
 DEFAULT_IMAGE_ROOT = "/home/ryreu/guided_cnn/code/NICO-plus/data/Unzip_DG_Bench/DG_Benchmark/NICO_DG"
+DEFAULT_EXTRA_MASK_ROOTS = ",".join([
+    "/home/ryreu/guided_cnn/code/SwitchDINO/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap",
+    "/home/ryreu/guided_cnn/code/SwitchCLIP/LearningToLook/code/WeCLIPPlus/results/val/prediction_cmap",
+])
 ALL_DOMAINS = ["autumn", "rock", "dim", "grass", "outdoor", "water"]
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -197,33 +202,34 @@ class NICOWithMasks(Dataset):
         return mask_path
 
 
-def build_train_val_datasets(args, sources, data_transforms, generator):
+def build_train_val_datasets(args, sources, data_transforms, generator, mask_root_override=None, split_indices=None):
     val_paths = [
         os.path.join(args.txtdir, args.dataset, f"{domain}_val.txt")
         for domain in sources
     ]
     has_val = all(os.path.exists(p) for p in val_paths)
+    mask_root = mask_root_override if mask_root_override is not None else args.mask_root
 
     if has_val:
         train_dataset = NICOWithMasks(
             args.txtdir, args.dataset, sources, "train",
-            args.mask_root,
+            mask_root,
             args.image_root,
             data_transforms['train'],
             None
         )
         val_dataset = NICOWithMasks(
             args.txtdir, args.dataset, sources, "val",
-            args.mask_root,
+            mask_root,
             args.image_root,
             data_transforms['eval'],
             None
         )
-        return train_dataset, val_dataset, has_val
+        return train_dataset, val_dataset, has_val, None
 
     full_train_base = NICOWithMasks(
         args.txtdir, args.dataset, sources, "train",
-        args.mask_root,
+        mask_root,
         args.image_root,
         None,
         None
@@ -232,22 +238,26 @@ def build_train_val_datasets(args, sources, data_transforms, generator):
     n_val = max(1, int(VAL_SPLIT_RATIO * n_total))
     n_train = n_total - n_val
 
-    train_indices, val_indices = random_split(
-        range(n_total), [n_train, n_val], generator=generator
-    )
-    train_idx_list = train_indices.indices
-    val_idx_list = val_indices.indices
+    if split_indices is None:
+        train_indices, val_indices = random_split(
+            range(n_total), [n_train, n_val], generator=generator
+        )
+        train_idx_list = train_indices.indices
+        val_idx_list = val_indices.indices
+        split_indices = (train_idx_list, val_idx_list)
+    else:
+        train_idx_list, val_idx_list = split_indices
 
     train_dataset = NICOWithMasks(
         args.txtdir, args.dataset, sources, "train",
-        args.mask_root,
+        mask_root,
         args.image_root,
         data_transforms['train'],
         None
     )
     val_dataset = NICOWithMasks(
         args.txtdir, args.dataset, sources, "train",
-        args.mask_root,
+        mask_root,
         args.image_root,
         data_transforms['eval'],
         None
@@ -255,7 +265,7 @@ def build_train_val_datasets(args, sources, data_transforms, generator):
 
     train_subset = Subset(train_dataset, train_idx_list)
     val_subset = Subset(val_dataset, val_idx_list)
-    return train_subset, val_subset, has_val
+    return train_subset, val_subset, has_val, split_indices
 
 
 # =============================================================================
@@ -292,7 +302,7 @@ def make_cam_model(num_classes):
 # LOSS FUNCTION
 # =============================================================================
 
-def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_attn):
+def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_ce):
     ce_loss = nn.functional.cross_entropy(outputs, labels)
 
     B, C, Hf, Wf = cams.shape
@@ -307,10 +317,53 @@ def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_attn):
     kl_div = nn.KLDivLoss(reduction='batchmean')
     attn_loss = kl_div(log_p, gt_prob)
 
-    if only_attn:
-        return attn_loss, attn_loss
+    if only_ce:
+        return ce_loss, attn_loss
     else:
         return ce_loss + kl_lambda * attn_loss, attn_loss
+
+
+def compute_attn_losses(saliency, gt_masks):
+    """
+    Compute forward and reverse KL between saliency and GT mask distributions.
+    - forward_kl: KL(Mask || Saliency)
+    - reverse_kl: KL(Saliency || Mask)
+    """
+    B, Hf, Wf = saliency.shape
+    sal_flat = saliency.view(B, -1)
+    gt_flat = gt_masks.view(B, -1)
+
+    log_sal = nn.functional.log_softmax(sal_flat, dim=1)
+    sal_prob = nn.functional.softmax(sal_flat, dim=1)
+
+    gt_prob = gt_flat / (gt_flat.sum(dim=1, keepdim=True) + 1e-8)
+    log_gt = torch.log(gt_prob + 1e-8)
+
+    kl_div = nn.KLDivLoss(reduction="batchmean")
+    forward_kl = kl_div(log_sal, gt_prob)   # KL(Mask || Saliency)
+    reverse_kl = kl_div(log_gt, sal_prob)   # KL(Saliency || Mask)
+    return forward_kl, reverse_kl
+
+
+def input_grad_saliency(model, inputs, labels):
+    """
+    RRR-style input-gradient saliency:
+      |d(logit_y)/d(input)| summed over channels, normalized to [0,1].
+    Returns: (B,H,W) tensor in [0,1].
+    """
+    x = inputs.detach().requires_grad_(True)
+    model.zero_grad(set_to_none=True)
+
+    outputs, _ = model(x)  # logits
+    class_scores = outputs[torch.arange(labels.size(0), device=outputs.device), labels]
+    class_scores.sum().backward()
+
+    grads = x.grad.detach().abs().sum(dim=1)  # (B,H,W)
+    flat = grads.view(grads.size(0), -1)
+    mn, _ = flat.min(dim=1, keepdim=True)
+    mx, _ = flat.max(dim=1, keepdim=True)
+    sal_norm = ((flat - mn) / (mx - mn + 1e-8)).view_as(grads)
+    return sal_norm
 
 
 # =============================================================================
@@ -320,6 +373,8 @@ def compute_loss(outputs, labels, cams, gt_masks, kl_lambda, only_attn):
 def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
     best_wts = copy.deepcopy(model.state_dict())
     best_val_acc = -1.0
+    best_optim_value = -1.0
+    best_wts_optim = copy.deepcopy(model.state_dict())
 
     opt = optim.Adam(model.parameters(), lr=args.pre_lr, weight_decay=args.weight_decay)
     sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
@@ -332,6 +387,8 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
             sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
             best_wts = copy.deepcopy(model.state_dict())
             best_val_acc = -1.0
+            best_optim_value = -1.0
+            best_wts_optim = copy.deepcopy(model.state_dict())
 
         if epoch > args.attention_epoch:
             kl_lambda_real += args.kl_increment
@@ -343,6 +400,8 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
             running_loss = 0.0
             running_corrects = 0
             running_attn_loss = 0.0
+            running_attn_rev = 0.0
+            total = 0
 
             for batch in dataloaders[phase]:
                 inputs, labels, gt_masks, _ = batch
@@ -379,7 +438,7 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
                             feats,
                             gt_small,
                             kl_lambda=333,
-                            only_attn=True
+                            only_ce=True
                         )
                     else:
                         loss, attn_loss = compute_loss(
@@ -387,7 +446,7 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
                             feats,
                             gt_small,
                             kl_lambda=kl_lambda_real,
-                            only_attn=False
+                            only_ce=False
                         )
 
                     if is_train:
@@ -397,23 +456,51 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
                 running_attn_loss += attn_loss.item() * inputs.size(0)
+                total += inputs.size(0)
+
+                if not is_train:
+                    # Optim-value saliency metric: input gradients + reverse KL vs GT mask.
+                    with torch.enable_grad():
+                        sal = input_grad_saliency(model, inputs, labels)  # (B,H,W)
+                    _, rev_kl = compute_attn_losses(sal, gt_masks.squeeze(1))
+                    running_attn_rev += rev_kl.item() * inputs.size(0)
 
             if is_train:
                 sch.step()
 
             if phase == 'val':
-                epoch_acc = running_corrects.double() / dataset_sizes['val']
+                epoch_acc = running_corrects.double() / max(total, 1)
                 if epoch_acc > best_val_acc:
                     best_val_acc = epoch_acc
                     best_wts = copy.deepcopy(model.state_dict())
 
-        if trial is not None:
-            trial.report(float(best_val_acc), epoch)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
+                epoch_attn_rev = running_attn_rev / max(total, 1)
+                optim_value = float(epoch_acc) * math.exp(-float(args.beta) * epoch_attn_rev)
 
-    model.load_state_dict(best_wts)
-    return float(best_val_acc)
+                # For selection, mimic the reference logic: only start selecting by optim_value
+                # once attention has begun (same epoch indexing convention).
+                if epoch >= args.attention_epoch and optim_value > best_optim_value:
+                    best_optim_value = optim_value
+                    best_wts_optim = copy.deepcopy(model.state_dict())
+
+                print(
+                    f"[Epoch {epoch}] val_acc={float(epoch_acc):.6f} rev_kl={epoch_attn_rev:.6f} "
+                    f"optim_value={optim_value:.6f}",
+                    flush=True
+                )
+
+        if trial is not None:
+            # No pruning, but keep reporting for visibility.
+            trial.report(float(best_optim_value), epoch)
+
+    # If attention never started (shouldn't happen in normal configs), fall back.
+    if best_optim_value < 0.0:
+        best_optim_value = float(best_val_acc)
+        best_wts_optim = copy.deepcopy(best_wts)
+
+    # End-of-trial: load the checkpoint selected by best optim_value.
+    model.load_state_dict(best_wts_optim)
+    return float(best_optim_value), float(best_val_acc)
 
 
 # =============================================================================
@@ -487,6 +574,9 @@ def parse_seeds(seed_start: int, num_seeds: int, seeds_csv: str):
         return [int(s) for s in seeds_csv.split(',') if s.strip()]
     return list(range(seed_start, seed_start + num_seeds))
 
+def parse_csv_list(s: str):
+    return [x.strip() for x in (s or "").split(",") if x.strip()]
+
 
 def main():
     parser = argparse.ArgumentParser(description='Optuna search for Guided CNN on NICO++ (official splits)')
@@ -497,10 +587,13 @@ def main():
     parser.add_argument('--target', nargs='+', required=True, help='Target domains')
     parser.add_argument('--num_classes', type=int, default=60, help='Number of classes')
     parser.add_argument('--mask_root', type=str, default=DEFAULT_MASK_ROOT, help='Path to mask directory')
+    parser.add_argument('--extra_mask_roots', type=str, default=DEFAULT_EXTRA_MASK_ROOTS,
+                        help='Comma-separated additional mask_root paths for post-sweep evaluation (5-seed rerun).')
 
     parser.add_argument('--output_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--num_workers', type=int, default=8, help='Number of workers')
     parser.add_argument('--seed', type=int, default=SEED, help='Random seed')
+    parser.add_argument('--beta', type=float, default=BETA_DEFAULT, help='optim_value beta coefficient')
 
     # Optuna settings
     parser.add_argument('--n_trials', type=int, default=20, help='Number of Optuna trials')
@@ -565,7 +658,7 @@ def main():
         ])
     }
 
-    train_dataset, val_dataset, has_val = build_train_val_datasets(
+    train_dataset, val_dataset, has_val, split_indices = build_train_val_datasets(
         args, sources, data_transforms, base_g
     )
 
@@ -601,7 +694,7 @@ def main():
     ]
 
     sampler = optuna.samplers.TPESampler(seed=args.optuna_seed)
-    pruner = optuna.pruners.MedianPruner(n_warmup_steps=5)
+    pruner = optuna.pruners.NopPruner()
 
     study = optuna.create_study(
         direction='maximize',
@@ -614,9 +707,10 @@ def main():
 
     trial_log_path = os.path.join(output_dir, "optuna_trials.csv")
 
-    def log_trial(trial, best_val_acc, test_results):
+    def log_trial(trial, best_optim_value, best_val_acc, test_results):
         row = {
             "trial": trial.number,
+            "best_optim_value": best_optim_value,
             "best_val_acc": best_val_acc,
             "test_results": json.dumps(test_results),
             "params": json.dumps(trial.params),
@@ -662,22 +756,29 @@ def main():
             attention_epoch=attention_epoch,
             kl_lambda_start=kl_lambda_start,
             kl_increment=kl_increment,
-            num_epochs=args.num_epochs
+            num_epochs=args.num_epochs,
+            beta=float(args.beta),
         )
 
         try:
-            best_val_acc = train_one_trial(model, dataloaders, dataset_sizes, trial_args, trial=trial)
+            best_optim_value, best_val_acc = train_one_trial(model, dataloaders, dataset_sizes, trial_args, trial=trial)
             test_results = evaluate_test(model, test_loaders, args.target)
             if trial is not None:
                 trial.set_user_attr("test_results", test_results)
-            log_trial(trial, best_val_acc, test_results)
-            print(f"[TRIAL {trial.number}] done best_val_acc={best_val_acc:.6f} test={test_results}", flush=True)
+                trial.set_user_attr("best_val_acc", float(best_val_acc))
+                trial.set_user_attr("best_optim_value", float(best_optim_value))
+            log_trial(trial, best_optim_value, best_val_acc, test_results)
+            print(
+                f"[TRIAL {trial.number}] done best_optim_value={best_optim_value:.6f} best_val_acc={best_val_acc:.6f} "
+                f"test={test_results}",
+                flush=True
+            )
         finally:
             del model
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        return best_val_acc
+        return best_optim_value
 
     study.optimize(objective, n_trials=args.n_trials, timeout=args.timeout)
 
@@ -686,6 +787,7 @@ def main():
         'best_value': study.best_value,
         'best_params': study.best_params,
         'best_test_results': best_trial.user_attrs.get("test_results", None),
+        'best_val_acc': best_trial.user_attrs.get("best_val_acc", None),
         'n_trials': len(study.trials)
     }
 
@@ -693,8 +795,10 @@ def main():
     with open(best_path, 'w') as f:
         json.dump(best, f, indent=2)
 
-    print("Best validation accuracy:", study.best_value)
+    print("Best optim_value:", study.best_value)
     print("Best params:", study.best_params)
+    if best["best_val_acc"] is not None:
+        print("Best trial val_acc:", best["best_val_acc"])
     if best["best_test_results"] is not None:
         print("Best trial test results:", best["best_test_results"])
     else:
@@ -712,6 +816,7 @@ def main():
         best_kl_increment = float(study.best_params.get('kl_increment', best_kl_lambda_start / 10.0))
 
         rerun_path = os.path.join(output_dir, "best_rerun_seeds.csv")
+        rerun_masks_path = os.path.join(output_dir, "best_rerun_seeds_masks.csv")
         rerun_header = [
             "seed", "pre_lr", "post_lr", "post_lr_ratio", "attention_epoch",
             "kl_lambda_start", "kl_increment", "best_val_acc", "test_results_json", "minutes"
@@ -721,6 +826,12 @@ def main():
             with open(rerun_path, "w", newline="") as f:
                 csv.writer(f).writerow(rerun_header)
 
+        rerun_masks_header = ["mask_root"] + rerun_header
+        write_header_masks = not os.path.exists(rerun_masks_path)
+        if write_header_masks:
+            with open(rerun_masks_path, "w", newline="") as f:
+                csv.writer(f).writerow(rerun_masks_header)
+
         print(f"\n=== Rerun best params for {len(seeds)} seeds ===", flush=True)
         print(
             "Best params resolved: "
@@ -729,42 +840,79 @@ def main():
             flush=True,
         )
 
-        for seed in seeds:
-            seed_everything(seed)
-            g = torch.Generator()
-            g.manual_seed(seed)
+        # Evaluate best hyperparams on primary masks (used for the sweep) + any extra mask roots.
+        extra_mask_roots = parse_csv_list(args.extra_mask_roots)
+        mask_roots = [args.mask_root] + [p for p in extra_mask_roots if p != args.mask_root]
 
-            dataloaders = {
-                'train': DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True,
-                                    num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g),
-                'val': DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False,
-                                  num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g),
-            }
+        for mask_root in mask_roots:
+            if not os.path.isdir(mask_root):
+                print(f"[RERUN] skip missing mask_root: {mask_root}", flush=True)
+                continue
 
-            model = make_cam_model(args.num_classes).to(DEVICE)
-
-            run_args = argparse.Namespace(
-                pre_lr=best_pre_lr,
-                post_lr=best_post_lr,
-                weight_decay=WEIGHT_DECAY,
-                attention_epoch=min(best_attention_epoch, max(1, args.num_epochs - 1)),
-                kl_lambda_start=best_kl_lambda_start,
-                kl_increment=best_kl_increment,
-                num_epochs=args.num_epochs
+            # Rebuild datasets for this mask_root but keep the same split indices, if we had to create one.
+            train_ds_m, val_ds_m, _, _ = build_train_val_datasets(
+                args, sources, data_transforms, base_g,
+                mask_root_override=mask_root,
+                split_indices=split_indices
             )
 
-            start = time.time()
-            best_val_acc = train_one_trial(model, dataloaders, dataset_sizes, run_args, trial=None)
-            test_results = evaluate_test(model, test_loaders, args.target)
-            minutes = (time.time() - start) / 60.0
+            ds_sizes_m = {"train": len(train_ds_m), "val": len(val_ds_m)}
+            test_datasets_m = [
+                NICOWithMasks(
+                    args.txtdir, args.dataset, [domain], "test",
+                    mask_root,
+                    args.image_root,
+                    data_transforms['eval'],
+                    None
+                )
+                for domain in args.target
+            ]
+            test_loaders_m = [
+                DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False,
+                           num_workers=args.num_workers, worker_init_fn=seed_worker, generator=base_g)
+                for ds in test_datasets_m
+            ]
 
-            print(
-                f"[RERUN seed={seed}] best_val_acc={best_val_acc:.6f} test={test_results} time={minutes:.1f}m",
-                flush=True,
-            )
+            print(f"\n=== Rerun masks: {mask_root} ===", flush=True)
 
-            with open(rerun_path, "a", newline="") as f:
-                csv.writer(f).writerow([
+            for seed in seeds:
+                seed_everything(seed)
+                g = torch.Generator()
+                g.manual_seed(seed)
+
+                dataloaders_m = {
+                    'train': DataLoader(train_ds_m, batch_size=BATCH_SIZE, shuffle=True,
+                                        num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g),
+                    'val': DataLoader(val_ds_m, batch_size=BATCH_SIZE, shuffle=False,
+                                      num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g),
+                }
+
+                model = make_cam_model(args.num_classes).to(DEVICE)
+
+                run_args = argparse.Namespace(
+                    pre_lr=best_pre_lr,
+                    post_lr=best_post_lr,
+                    weight_decay=WEIGHT_DECAY,
+                    attention_epoch=min(best_attention_epoch, max(1, args.num_epochs - 1)),
+                    kl_lambda_start=best_kl_lambda_start,
+                    kl_increment=best_kl_increment,
+                    num_epochs=args.num_epochs,
+                    beta=float(args.beta),
+                )
+
+                start = time.time()
+                best_optim_value, best_val_acc = train_one_trial(model, dataloaders_m, ds_sizes_m, run_args, trial=None)
+                test_results = evaluate_test(model, test_loaders_m, args.target)
+                minutes = (time.time() - start) / 60.0
+
+                print(
+                    f"[RERUN mask={os.path.basename(mask_root)} seed={seed}] "
+                    f"best_optim_value={best_optim_value:.6f} best_val_acc={best_val_acc:.6f} "
+                    f"test={test_results} time={minutes:.1f}m",
+                    flush=True,
+                )
+
+                row = [
                     seed,
                     best_pre_lr,
                     best_post_lr,
@@ -775,13 +923,22 @@ def main():
                     best_val_acc,
                     json.dumps(test_results),
                     minutes,
-                ])
+                ]
 
-            del model
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                # Back-compat: keep writing the primary mask_root reruns to the old CSV.
+                if mask_root == args.mask_root:
+                    with open(rerun_path, "a", newline="") as f:
+                        csv.writer(f).writerow(row)
+
+                with open(rerun_masks_path, "a", newline="") as f:
+                    csv.writer(f).writerow([mask_root] + row)
+
+                del model
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         print("Saved reruns:", rerun_path, flush=True)
+        print("Saved reruns (all masks):", rerun_masks_path, flush=True)
 
 
 if __name__ == '__main__':
