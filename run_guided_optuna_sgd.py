@@ -615,10 +615,11 @@ def main():
     parser.add_argument('--load_if_exists', action='store_true', help='Reuse study if it exists')
 
     # Search space (set min=max to fix a value)
-    parser.add_argument('--pre_lr_low', type=float, default=1e-5)
-    parser.add_argument('--pre_lr_high', type=float, default=3e-4)
-    parser.add_argument('--post_lr_low', type=float, default=1e-5)
-    parser.add_argument('--post_lr_high', type=float, default=3e-4)
+    # Wider + lower LR range for SGD sweeps (requested): 5e-7 to 5e-5.
+    parser.add_argument('--pre_lr_low', type=float, default=5e-7)
+    parser.add_argument('--pre_lr_high', type=float, default=5e-5)
+    parser.add_argument('--post_lr_low', type=float, default=5e-7)
+    parser.add_argument('--post_lr_high', type=float, default=5e-5)
     parser.add_argument('--att_epoch_min', type=int, default=1)
     parser.add_argument('--att_epoch_max', type=int, default=25)
     parser.add_argument('--kl_start_low', type=float, default=0.1)

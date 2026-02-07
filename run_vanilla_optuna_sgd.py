@@ -330,11 +330,9 @@ def main():
     parser.add_argument("--num_workers", type=int, default=8, help="DataLoader workers")
     parser.add_argument("--seed", type=int, default=SEED, help="Random seed")
 
-    # Fixed SGD training params
-    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE_DEFAULT)
+    # Fixed SGD training params (optimizer type is fixed to SGD; some values can be swept)
     parser.add_argument("--num_epochs", type=int, default=NUM_EPOCHS_DEFAULT)
     parser.add_argument("--momentum", type=float, default=MOMENTUM_DEFAULT)
-    parser.add_argument("--weight_decay", type=float, default=WEIGHT_DECAY_DEFAULT)
 
     # Optuna settings
     parser.add_argument("--n_trials", type=int, default=20, help="Number of Optuna trials")
@@ -345,9 +343,34 @@ def main():
     parser.add_argument("--load_if_exists", action="store_true", help="Reuse study if it exists")
 
     # Search space
-    parser.add_argument("--lr_low", type=float, default=1e-5)
-    parser.add_argument("--lr_high", type=float, default=3e-4)
+    # Wider + lower LR range for SGD sweeps (requested): 5e-7 to 5e-5.
+    parser.add_argument("--lr_low", type=float, default=5e-7)
+    parser.add_argument("--lr_high", type=float, default=5e-5)
     parser.add_argument("--dropout_choices", type=str, default="0.0,0.1,0.5", help="Comma-separated dropout ps to search.")
+    parser.add_argument(
+        "--batch_size_choices",
+        type=str,
+        default="16,32,64",
+        help="Comma-separated batch sizes to search (e.g., '16,32,64').",
+    )
+    parser.add_argument(
+        "--weight_decay_low",
+        type=float,
+        default=1e-6,
+        help="Lower bound (log-uniform) for weight decay search (when non-zero).",
+    )
+    parser.add_argument(
+        "--weight_decay_high",
+        type=float,
+        default=1e-3,
+        help="Upper bound (log-uniform) for weight decay search (when non-zero).",
+    )
+    parser.add_argument(
+        "--weight_decay_allow_zero",
+        type=int,
+        default=1,
+        help="Whether to allow exact 0 weight_decay via a categorical toggle (1/0).",
+    )
 
     # After sweep: rerun the best hyperparameters for multiple seeds.
     parser.add_argument("--rerun_best", type=int, default=1, help="After sweep, rerun best params for multiple seeds (1/0).")
@@ -407,6 +430,7 @@ def main():
     ]
 
     dropout_choices = [float(x) for x in args.dropout_choices.split(",") if x.strip()]
+    batch_size_choices = [int(x) for x in args.batch_size_choices.split(",") if x.strip()]
 
     sampler = optuna.samplers.TPESampler(seed=args.optuna_seed)
     pruner = optuna.pruners.NopPruner()
@@ -439,10 +463,21 @@ def main():
     def objective(trial):
         lr = suggest_loguniform(trial, "lr", args.lr_low, args.lr_high)
         resnet_dropout = trial.suggest_categorical("resnet_dropout", dropout_choices)
+        batch_size = trial.suggest_categorical("batch_size", batch_size_choices)
+
+        if int(args.weight_decay_allow_zero) == 1:
+            wd_is_zero = trial.suggest_categorical("wd_is_zero", [True, False])
+            if wd_is_zero:
+                weight_decay = 0.0
+            else:
+                weight_decay = suggest_loguniform(trial, "weight_decay", args.weight_decay_low, args.weight_decay_high)
+        else:
+            wd_is_zero = False
+            weight_decay = suggest_loguniform(trial, "weight_decay", args.weight_decay_low, args.weight_decay_high)
 
         print(
             f"[TRIAL {trial.number}] start params={{'lr': {lr}, 'momentum': {args.momentum}, "
-            f"'weight_decay': {args.weight_decay}, 'batch_size': {args.batch_size}, "
+            f"'weight_decay': {weight_decay}, 'batch_size': {batch_size}, "
             f"'resnet_dropout': {resnet_dropout}, 'num_epochs': {args.num_epochs}}}",
             flush=True,
         )
@@ -454,18 +489,18 @@ def main():
 
         dataloaders = {
             "train": DataLoader(
-                train_dataset, batch_size=args.batch_size, shuffle=True,
+                train_dataset, batch_size=batch_size, shuffle=True,
                 num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g
             ),
             "val": DataLoader(
-                val_dataset, batch_size=args.batch_size, shuffle=False,
+                val_dataset, batch_size=batch_size, shuffle=False,
                 num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g
             ),
         }
 
         test_loaders = [
             DataLoader(
-                ds, batch_size=args.batch_size, shuffle=False,
+                ds, batch_size=batch_size, shuffle=False,
                 num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g
             )
             for ds in test_datasets
@@ -475,7 +510,7 @@ def main():
         trial_args = argparse.Namespace(
             lr=lr,
             momentum=args.momentum,
-            weight_decay=args.weight_decay,
+            weight_decay=weight_decay,
             num_epochs=args.num_epochs,
         )
 
@@ -515,6 +550,8 @@ def main():
         seeds = parse_seeds(args.rerun_seed_start, args.rerun_num_seeds, args.rerun_seeds)
         best_lr = float(study.best_params["lr"])
         best_dropout = float(study.best_params.get("resnet_dropout", dropout_choices[0]))
+        best_batch_size = int(study.best_params.get("batch_size", BATCH_SIZE_DEFAULT))
+        best_weight_decay = resolve_weight_decay(study.best_params)
 
         rerun_path = os.path.join(output_dir, "best_rerun_seeds.csv")
         rerun_header = [
@@ -528,8 +565,8 @@ def main():
 
         print(f"\n=== Rerun best params for {len(seeds)} seeds ===", flush=True)
         print(
-            f"Best params resolved: lr={best_lr} momentum={args.momentum} weight_decay={args.weight_decay} "
-            f"batch_size={args.batch_size} resnet_dropout={best_dropout} num_epochs={args.num_epochs}",
+            f"Best params resolved: lr={best_lr} momentum={args.momentum} weight_decay={best_weight_decay} "
+            f"batch_size={best_batch_size} resnet_dropout={best_dropout} num_epochs={args.num_epochs}",
             flush=True,
         )
 
@@ -543,18 +580,18 @@ def main():
 
             dataloaders_s = {
                 "train": DataLoader(
-                    train_dataset_s, batch_size=args.batch_size, shuffle=True,
+                    train_dataset_s, batch_size=best_batch_size, shuffle=True,
                     num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g
                 ),
                 "val": DataLoader(
-                    val_dataset_s, batch_size=args.batch_size, shuffle=False,
+                    val_dataset_s, batch_size=best_batch_size, shuffle=False,
                     num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g
                 ),
             }
 
             test_loaders = [
                 DataLoader(
-                    ds, batch_size=args.batch_size, shuffle=False,
+                    ds, batch_size=best_batch_size, shuffle=False,
                     num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g
                 )
                 for ds in test_datasets
@@ -564,7 +601,7 @@ def main():
             run_args = argparse.Namespace(
                 lr=best_lr,
                 momentum=args.momentum,
-                weight_decay=args.weight_decay,
+                weight_decay=best_weight_decay,
                 num_epochs=args.num_epochs,
             )
 
@@ -584,8 +621,8 @@ def main():
                     seed,
                     best_lr,
                     args.momentum,
-                    args.weight_decay,
-                    args.batch_size,
+                    best_weight_decay,
+                    best_batch_size,
                     best_dropout,
                     args.num_epochs,
                     best_val_acc,

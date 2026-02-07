@@ -43,7 +43,8 @@ MASK_ROOT=${MASK_ROOT:-/home/ryreu/guided_cnn/code/HaveNicoLearn/LearningToLook/
 OUTPUT_DIR=${OUTPUT_DIR:-/home/ryreu/guided_cnn/NICO_runs/output}
 
 DATASET=${DATASET:-NICO}
-TARGET_DOMAINS=${TARGET_DOMAINS:?Set TARGET_DOMAINS (e.g., "autumn")}
+# Default to autumn so you can `sbatch` without extra env vars.
+TARGET_DOMAINS=${TARGET_DOMAINS:-autumn}
 TARGET_TAG=${TARGET_TAG:-$(echo "$TARGET_DOMAINS" | tr ' ' '-')}
 
 SEED=${SEED:-59}
@@ -113,4 +114,3 @@ srun --unbuffered python -u run_nico_guided_sgd_epoch_test.py \
   --kl_lambda_start "$KL_LAMBDA_START" \
   --kl_increment "$KL_INCREMENT" \
   --beta "$BETA"
-
