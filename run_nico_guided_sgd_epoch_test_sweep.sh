@@ -52,12 +52,12 @@ NUM_EPOCHS=${NUM_EPOCHS:-30}
 BATCH_SIZE=${BATCH_SIZE:-32}
 BETA=${BETA:-0.1}
 
-# Guided hyperparams (required)
-PRE_LR=${PRE_LR:?Set PRE_LR (e.g., 1e-5)}
-POST_LR=${POST_LR:?Set POST_LR (e.g., 1e-6)}
-ATTENTION_EPOCH=${ATTENTION_EPOCH:?Set ATTENTION_EPOCH (e.g., 15)}
-KL_LAMBDA_START=${KL_LAMBDA_START:?Set KL_LAMBDA_START (e.g., 1)}
-KL_INCREMENT=${KL_INCREMENT:?Set KL_INCREMENT (e.g., 0.2)}
+# Guided hyperparams (defaults so you can `sbatch` directly)
+PRE_LR=${PRE_LR:-1e-5}
+POST_LR=${POST_LR:-1e-6}
+ATTENTION_EPOCH=${ATTENTION_EPOCH:-15}
+KL_LAMBDA_START=${KL_LAMBDA_START:-1}
+KL_INCREMENT=${KL_INCREMENT:-0.2}
 
 RUN_OUT=${RUN_OUT:-$OUTPUT_DIR/sgd_epoch_test/target_${TARGET_TAG}/seed_${SEED}/job_${SLURM_JOB_ID:-manual}}
 mkdir -p "$RUN_OUT"
