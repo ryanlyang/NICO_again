@@ -343,9 +343,9 @@ def main():
     parser.add_argument("--load_if_exists", action="store_true", help="Reuse study if it exists")
 
     # Search space
-    # Wider + lower LR range for SGD sweeps (requested): 5e-7 to 5e-5.
-    parser.add_argument("--lr_low", type=float, default=5e-7)
-    parser.add_argument("--lr_high", type=float, default=5e-5)
+    # LR range for SGD sweeps.
+    parser.add_argument("--lr_low", type=float, default=1e-5)
+    parser.add_argument("--lr_high", type=float, default=1e-3)
     parser.add_argument("--dropout_choices", type=str, default="0.0,0.1,0.5", help="Comma-separated dropout ps to search.")
     parser.add_argument(
         "--batch_size_choices",

@@ -2,7 +2,7 @@
 #SBATCH --account=reu-aisocial
 #SBATCH --partition=tier3
 #SBATCH --gres=gpu:a100:1
-#SBATCH --time=2-12:00:00
+#SBATCH --time=7-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=128G
@@ -54,8 +54,8 @@ OUTPUT_DIR=${OUTPUT_DIR:-/home/ryreu/guided_cnn/NICO_runs/output}
 TARGET_DOMAINS=${TARGET_DOMAINS:?Set TARGET_DOMAINS (e.g., "autumn")}
 
 DATASET=${DATASET:-NICO}
-TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-86400}
-N_TRIALS=${N_TRIALS:-100}
+TIMEOUT_SECONDS=${TIMEOUT_SECONDS-}
+N_TRIALS=${N_TRIALS:-50}
 TARGET_TAG=${TARGET_TAG:-$(echo "$TARGET_DOMAINS" | tr ' ' '-')}
 STUDY_NAME=${STUDY_NAME:-nico_guided_sgd_${TARGET_TAG}}
 OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_guided_sgd_v1_${TARGET_TAG}.db}
@@ -110,8 +110,14 @@ echo "Images: $IMAGE_ROOT"
 echo "Output: $OUTPUT_DIR"
 echo "Targets: $TARGET_DOMAINS"
 echo "Trials: $N_TRIALS"
-echo "Timeout: $TIMEOUT_SECONDS"
+if [[ -n "${TIMEOUT_SECONDS}" ]]; then
+  echo "Timeout: $TIMEOUT_SECONDS"
+fi
 which python
+
+if [[ -n "${TIMEOUT_SECONDS}" ]]; then
+  EXTRA_ARGS+=(--timeout "$TIMEOUT_SECONDS")
+fi
 
 srun --unbuffered python -u run_guided_optuna_sgd.py \
   --txtdir "$TXTLIST_DIR" \
@@ -121,6 +127,4 @@ srun --unbuffered python -u run_guided_optuna_sgd.py \
   --output_dir "$OUTPUT_DIR" \
   --target $TARGET_DOMAINS \
   --n_trials "$N_TRIALS" \
-  --timeout "$TIMEOUT_SECONDS" \
   "${EXTRA_ARGS[@]}"
-

@@ -396,7 +396,6 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
     best_wts = copy.deepcopy(model.state_dict())
     best_val_acc = -1.0
     best_optim_value = -1.0
-    best_wts_optim = copy.deepcopy(model.state_dict())
 
     param_groups = _get_param_groups(model, args.base_lr, args.classifier_lr)
     opt = optim.SGD(param_groups, momentum=MOMENTUM, weight_decay=args.weight_decay)
@@ -414,7 +413,6 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
             best_wts = copy.deepcopy(model.state_dict())
             best_val_acc = -1.0
             best_optim_value = -1.0
-            best_wts_optim = copy.deepcopy(model.state_dict())
 
         if epoch > args.attention_epoch:
             kl_lambda_real += args.kl_increment
@@ -502,13 +500,10 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
 
                 epoch_attn_rev = running_attn_rev / max(total, 1)
                 optim_value = float(epoch_acc) * math.exp(-float(args.beta) * epoch_attn_rev)
+                if optim_value > best_optim_value:
+                    best_optim_value = optim_value
 
                 # For selection, mimic the reference logic: only start selecting by optim_value
-                # once attention has begun (same epoch indexing convention).
-                if epoch >= args.attention_epoch and optim_value > best_optim_value:
-                    best_optim_value = optim_value
-                    best_wts_optim = copy.deepcopy(model.state_dict())
-
                 print(
                     f"[Epoch {epoch}] val_acc={float(epoch_acc):.6f} rev_kl={epoch_attn_rev:.6f} "
                     f"optim_value={optim_value:.6f}",
@@ -517,16 +512,14 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
 
         if trial is not None:
             # No pruning, but keep reporting for visibility.
-            trial.report(float(best_optim_value), epoch)
+            trial.report(float(best_val_acc), epoch)
 
-    # If attention never started (shouldn't happen in normal configs), fall back.
     if best_optim_value < 0.0:
         best_optim_value = float(best_val_acc)
-        best_wts_optim = copy.deepcopy(best_wts)
 
-    # End-of-trial: load the checkpoint selected by best optim_value.
-    model.load_state_dict(best_wts_optim)
-    return float(best_optim_value), float(best_val_acc)
+    # End-of-trial: load the checkpoint selected by best val accuracy.
+    model.load_state_dict(best_wts)
+    return float(best_val_acc), float(best_optim_value)
 
 
 # =============================================================================
@@ -736,11 +729,11 @@ def main():
 
     trial_log_path = os.path.join(output_dir, "optuna_trials.csv")
 
-    def log_trial(trial, best_optim_value, best_val_acc, test_results):
+    def log_trial(trial, best_val_acc, best_optim_value, test_results):
         row = {
             "trial": trial.number,
-            "best_optim_value": best_optim_value,
             "best_val_acc": best_val_acc,
+            "best_optim_value": best_optim_value,
             "test_results": json.dumps(test_results),
             "params": json.dumps(trial.params),
         }
@@ -793,15 +786,15 @@ def main():
         )
 
         try:
-            best_optim_value, best_val_acc = train_one_trial(model, dataloaders, dataset_sizes, trial_args, trial=trial)
+            best_val_acc, best_optim_value = train_one_trial(model, dataloaders, dataset_sizes, trial_args, trial=trial)
             test_results = evaluate_test(model, test_loaders, args.target)
             if trial is not None:
                 trial.set_user_attr("test_results", test_results)
                 trial.set_user_attr("best_val_acc", float(best_val_acc))
                 trial.set_user_attr("best_optim_value", float(best_optim_value))
-            log_trial(trial, best_optim_value, best_val_acc, test_results)
+            log_trial(trial, best_val_acc, best_optim_value, test_results)
             print(
-                f"[TRIAL {trial.number}] done best_optim_value={best_optim_value:.6f} best_val_acc={best_val_acc:.6f} "
+                f"[TRIAL {trial.number}] done best_val_acc={best_val_acc:.6f} best_optim_value={best_optim_value:.6f} "
                 f"test={test_results}",
                 flush=True
             )
@@ -810,7 +803,7 @@ def main():
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        return best_optim_value
+        return best_val_acc
 
     study.optimize(objective, n_trials=args.n_trials, timeout=args.timeout)
 
@@ -820,6 +813,7 @@ def main():
         'best_params': study.best_params,
         'best_test_results': best_trial.user_attrs.get("test_results", None),
         'best_val_acc': best_trial.user_attrs.get("best_val_acc", None),
+        'best_optim_value': best_trial.user_attrs.get("best_optim_value", None),
         'n_trials': len(study.trials)
     }
 
@@ -827,10 +821,12 @@ def main():
     with open(best_path, 'w') as f:
         json.dump(best, f, indent=2)
 
-    print("Best optim_value:", study.best_value)
+    print("Best validation accuracy:", study.best_value)
     print("Best params:", study.best_params)
     if best["best_val_acc"] is not None:
         print("Best trial val_acc:", best["best_val_acc"])
+    if best_trial.user_attrs.get("best_optim_value", None) is not None:
+        print("Best trial optim_value:", best_trial.user_attrs.get("best_optim_value"))
     if best["best_test_results"] is not None:
         print("Best trial test results:", best["best_test_results"])
     else:
@@ -939,13 +935,13 @@ def main():
                 )
 
                 start = time.time()
-                best_optim_value, best_val_acc = train_one_trial(model, dataloaders_m, ds_sizes_m, run_args, trial=None)
+                best_val_acc, best_optim_value = train_one_trial(model, dataloaders_m, ds_sizes_m, run_args, trial=None)
                 test_results = evaluate_test(model, test_loaders_m, args.target)
                 minutes = (time.time() - start) / 60.0
 
                 print(
                     f"[RERUN mask={os.path.basename(mask_root)} seed={seed}] "
-                    f"best_optim_value={best_optim_value:.6f} best_val_acc={best_val_acc:.6f} "
+                    f"best_val_acc={best_val_acc:.6f} best_optim_value={best_optim_value:.6f} "
                     f"test={test_results} time={minutes:.1f}m",
                     flush=True,
                 )
