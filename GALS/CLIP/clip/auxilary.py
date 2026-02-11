@@ -10,10 +10,9 @@ from torch.nn.init import xavier_normal_
 from torch.nn.parameter import Parameter
 from torch.nn import functional as F
 
-# We define this function as _pad because it takes an argument
-# named pad, which clobbers the recursive reference to the pad
-# function needed for __torch_function__ support
-pad = F._pad
+# Older CLIP explainability code referenced private torch API F._pad.
+# Newer torch builds may not expose that symbol; fall back to public F.pad.
+pad = getattr(F, "_pad", F.pad)
 
 # This class exists solely for Transformer; it has an annotation stating
 # that bias is never None, which appeases TorchScript
