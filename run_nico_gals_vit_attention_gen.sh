@@ -77,6 +77,26 @@ fi
 
 mkdir -p "$ATTENTION_ROOT"
 
+BPE_PATH="$REPO_ROOT/GALS/CLIP/clip/bpe_simple_vocab_16e6.txt.gz"
+if [[ ! -f "$BPE_PATH" ]]; then
+  echo "[GEN] Missing CLIP BPE vocab. Downloading to: $BPE_PATH"
+  mkdir -p "$(dirname "$BPE_PATH")"
+  if command -v curl >/dev/null 2>&1; then
+    curl -L --fail -o "$BPE_PATH" \
+      "https://github.com/openai/CLIP/raw/main/clip/bpe_simple_vocab_16e6.txt.gz" || \
+    curl -L --fail -o "$BPE_PATH" \
+      "https://openaipublic.azureedge.net/clip/bpe_simple_vocab_16e6.txt.gz"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -O "$BPE_PATH" \
+      "https://github.com/openai/CLIP/raw/main/clip/bpe_simple_vocab_16e6.txt.gz" || \
+    wget -O "$BPE_PATH" \
+      "https://openaipublic.azureedge.net/clip/bpe_simple_vocab_16e6.txt.gz"
+  else
+    echo "[ERROR] Need curl or wget to download missing BPE vocab: $BPE_PATH" >&2
+    exit 2
+  fi
+fi
+
 echo "[$(date)] Host: $(hostname)"
 echo "Repo: $REPO_ROOT"
 echo "txtlist: $TXTLIST_DIR"

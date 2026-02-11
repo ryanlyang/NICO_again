@@ -15,6 +15,7 @@ import os
 import random
 import sys
 from typing import Dict, List, Tuple
+import urllib.request
 
 import numpy as np
 from PIL import Image
@@ -164,7 +165,27 @@ def _compute_vit_transformer_attention(model, image, tokenized_text, device):
 
 
 def _load_clip_vit(device):
-    gals_clip_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "GALS", "CLIP")
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    gals_clip_root = os.path.join(repo_root, "GALS", "CLIP")
+    bpe_path = os.path.join(gals_clip_root, "clip", "bpe_simple_vocab_16e6.txt.gz")
+    if not os.path.exists(bpe_path):
+        os.makedirs(os.path.dirname(bpe_path), exist_ok=True)
+        urls = [
+            "https://github.com/openai/CLIP/raw/main/clip/bpe_simple_vocab_16e6.txt.gz",
+            "https://openaipublic.azureedge.net/clip/bpe_simple_vocab_16e6.txt.gz",
+        ]
+        last_err = None
+        for url in urls:
+            try:
+                urllib.request.urlretrieve(url, bpe_path)
+                break
+            except Exception as err:  # pragma: no cover - best effort fallback
+                last_err = err
+        if not os.path.exists(bpe_path):
+            raise FileNotFoundError(
+                f"Missing CLIP tokenizer vocab at {bpe_path} and auto-download failed: {last_err}"
+            )
+
     if gals_clip_root not in sys.path:
         sys.path.insert(0, gals_clip_root)
     from clip import clip  # pylint: disable=import-error
