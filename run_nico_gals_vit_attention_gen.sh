@@ -110,6 +110,8 @@ which python
 CHUNK_SIZE=${CHUNK_SIZE:-1000}
 OVERWRITE=${OVERWRITE:-0}
 TOTAL_N=${TOTAL_N-}
+START_IDX=${START_IDX:-0}
+END_IDX=${END_IDX-}
 
 if [[ -z "${TOTAL_N}" ]]; then
   echo "[GEN] Counting unique image records from txtlists..."
@@ -143,14 +145,25 @@ if [[ -z "${TOTAL_N}" || "${TOTAL_N}" -le 0 ]]; then
   echo "[ERROR] Invalid TOTAL_N=${TOTAL_N}" >&2
   exit 2
 fi
+if [[ -z "${END_IDX}" ]]; then
+  END_IDX=$TOTAL_N
+fi
+if [[ "$START_IDX" -lt 0 || "$END_IDX" -le 0 || "$START_IDX" -ge "$END_IDX" ]]; then
+  echo "[ERROR] Invalid START_IDX/END_IDX: START_IDX=$START_IDX END_IDX=$END_IDX" >&2
+  exit 2
+fi
+if [[ "$END_IDX" -gt "$TOTAL_N" ]]; then
+  END_IDX=$TOTAL_N
+fi
 
 echo "[GEN] chunk size: $CHUNK_SIZE"
 echo "[GEN] total records: $TOTAL_N"
+echo "[GEN] selected range: [$START_IDX, $END_IDX)"
 
-for ((start=0; start<TOTAL_N; start+=CHUNK_SIZE)); do
+for ((start=START_IDX; start<END_IDX; start+=CHUNK_SIZE)); do
   end=$((start + CHUNK_SIZE))
-  if [[ "$end" -gt "$TOTAL_N" ]]; then
-    end=$TOTAL_N
+  if [[ "$end" -gt "$END_IDX" ]]; then
+    end=$END_IDX
   fi
   echo "[GEN] chunk: START_IDX=$start END_IDX=$end"
   srun --unbuffered python -u generate_nico_gals_vit_attention.py \
