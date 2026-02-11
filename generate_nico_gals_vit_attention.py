@@ -48,7 +48,14 @@ def seed_everything(seed: int):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    # Attention precompute does not need strict deterministic kernels.
+    # Keeping this off avoids CuBLAS deterministic hard-fail on some clusters.
+    force_det = os.environ.get("FORCE_DETERMINISTIC", "0").lower() in ("1", "true", "yes", "y")
+    if force_det:
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except TypeError:
+            torch.use_deterministic_algorithms(True)
 
 
 def _resolve_path(path: str, image_root: str) -> str:
