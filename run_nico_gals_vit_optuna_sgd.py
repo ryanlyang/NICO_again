@@ -495,7 +495,7 @@ def main():
     parser.add_argument("--classifier_lr_low", type=float, default=1e-5)
     parser.add_argument("--classifier_lr_high", type=float, default=1e-3)
     parser.add_argument("--dropout_choices", type=str, default="0.0,0.1,0.5")
-    parser.add_argument("--gals_lambda_low", type=float, default=1e2)
+    parser.add_argument("--gals_lambda_low", type=float, default=1.0)
     parser.add_argument("--gals_lambda_high", type=float, default=1e5)
 
     # Rerun best
