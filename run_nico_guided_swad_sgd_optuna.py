@@ -363,12 +363,12 @@ def train_swad_guided(model, dataloaders, args, swad_args):
             best_epoch = epoch
 
         print(f"[Epoch {epoch}] val_acc={val_acc:.6f} val_loss={val_loss:.6f}", flush=True)
-
-        swad.update_and_evaluate(swad_segment, val_acc, val_loss)
-        if swad.dead_valley:
-            print("SWAD valley is dead -> early stop!", flush=True)
-            break
-        swad_segment = swa_utils.AveragedModel(model, rm_optimizer=True)
+        if epoch >= args.swad_start_epoch:
+            swad.update_and_evaluate(swad_segment, val_acc, val_loss)
+            if swad.dead_valley:
+                print("SWAD valley is dead -> early stop!", flush=True)
+                break
+            swad_segment = swa_utils.AveragedModel(model, rm_optimizer=True)
 
     final_model = swad.get_final_model()
     # eval SWAD val acc
@@ -431,21 +431,23 @@ def main():
     p.add_argument("--momentum", type=float, default=0.9)
     p.add_argument("--weight_decay", type=float, default=1e-5)
 
-    p.add_argument("--base_lr_low", type=float, default=1e-6)
-    p.add_argument("--base_lr_high", type=float, default=1e-4)
-    p.add_argument("--classifier_lr_low", type=float, default=1e-5)
-    p.add_argument("--classifier_lr_high", type=float, default=1e-3)
-    p.add_argument("--lr2_mult", type=float, default=1.0)
+    p.add_argument("--base_lr_low", type=float, default=1e-5)
+    p.add_argument("--base_lr_high", type=float, default=1e-3)
+    p.add_argument("--classifier_lr_low", type=float, default=1e-4)
+    p.add_argument("--classifier_lr_high", type=float, default=1e-2)
+    p.add_argument("--lr2_mult_low", type=float, default=1e-3)
+    p.add_argument("--lr2_mult_high", type=float, default=1.0)
     p.add_argument("--attention_epoch", type=int, default=15)
-    p.add_argument("--kl_lambda_low", type=float, default=1.0)
-    p.add_argument("--kl_lambda_high", type=float, default=50.0)
-    p.add_argument("--kl_inc_ratio", type=float, default=0.05)
+    p.add_argument("--kl_lambda_low", type=float, default=0.01)
+    p.add_argument("--kl_lambda_high", type=float, default=5.0)
+    p.add_argument("--kl_increment", type=float, default=0.0)
 
     # SWAD sweep params
     p.add_argument("--n_converge_min", type=int, default=1)
     p.add_argument("--n_converge_max", type=int, default=5)
     p.add_argument("--n_tolerance", type=int, default=6)
     p.add_argument("--tolerance_ratio", type=float, default=0.3)
+    p.add_argument("--swad_start_epoch", type=int, default=0)
 
     # optuna settings
     p.add_argument("--n_trials", type=int, default=20)
@@ -535,13 +537,14 @@ def main():
     def objective(trial):
         base_lr = suggest_loguniform(trial, "base_lr", args.base_lr_low, args.base_lr_high)
         classifier_lr = suggest_loguniform(trial, "classifier_lr", args.classifier_lr_low, args.classifier_lr_high)
+        lr2_mult = suggest_loguniform(trial, "lr2_mult", args.lr2_mult_low, args.lr2_mult_high)
         kl_lambda_start = suggest_uniform(trial, "kl_lambda_start", args.kl_lambda_low, args.kl_lambda_high)
         n_converge = suggest_int(trial, "n_converge", args.n_converge_min, args.n_converge_max)
-        kl_increment = kl_lambda_start * args.kl_inc_ratio
+        kl_increment = args.kl_increment
 
         print(
             f"[TRIAL {trial.number}] start params={{'base_lr': {base_lr}, 'classifier_lr': {classifier_lr}, "
-            f"'lr2_mult': {args.lr2_mult}, 'attention_epoch': {args.attention_epoch}, "
+            f"'lr2_mult': {lr2_mult}, 'attention_epoch': {args.attention_epoch}, "
             f"'kl_lambda_start': {kl_lambda_start}, 'kl_increment': {kl_increment}, "
             f"'n_converge': {n_converge}, 'n_tolerance': {args.n_tolerance}, 'tolerance_ratio': {args.tolerance_ratio}}}",
             flush=True,
@@ -568,12 +571,13 @@ def main():
         trial_args = argparse.Namespace(
             base_lr=base_lr,
             classifier_lr=classifier_lr,
-            lr2_mult=args.lr2_mult,
+            lr2_mult=lr2_mult,
             momentum=args.momentum,
             weight_decay=args.weight_decay,
             attention_epoch=args.attention_epoch,
             kl_lambda_start=kl_lambda_start,
             kl_increment=kl_increment,
+            swad_start_epoch=args.swad_start_epoch,
             num_epochs=args.num_epochs,
         )
         swad_args = dict(
@@ -618,7 +622,8 @@ def main():
         best_base_lr = float(study.best_params["base_lr"])
         best_classifier_lr = float(study.best_params["classifier_lr"])
         best_kl_lambda_start = float(study.best_params["kl_lambda_start"])
-        best_kl_increment = best_kl_lambda_start * args.kl_inc_ratio
+        best_lr2_mult = float(study.best_params.get("lr2_mult", args.lr2_mult_low))
+        best_kl_increment = args.kl_increment
         best_n_converge = int(study.best_params.get("n_converge", args.n_converge_min))
 
         rerun_path = os.path.join(output_dir, "best_rerun_seeds.csv")
@@ -626,7 +631,7 @@ def main():
         rerun_header = [
             "seed", "base_lr", "classifier_lr", "lr2_mult",
             "attention_epoch", "kl_lambda_start", "kl_increment",
-            "n_converge", "n_tolerance", "tolerance_ratio",
+            "n_converge", "n_tolerance", "tolerance_ratio", "swad_start_epoch",
             "swad_val_acc", "test_results_json", "minutes"
         ]
         write_header = not os.path.exists(rerun_path)
@@ -675,12 +680,13 @@ def main():
                 run_args = argparse.Namespace(
                     base_lr=best_base_lr,
                     classifier_lr=best_classifier_lr,
-                    lr2_mult=args.lr2_mult,
+                    lr2_mult=best_lr2_mult,
                     momentum=args.momentum,
                     weight_decay=args.weight_decay,
                     attention_epoch=args.attention_epoch,
                     kl_lambda_start=best_kl_lambda_start,
                     kl_increment=best_kl_increment,
+                    swad_start_epoch=args.swad_start_epoch,
                     num_epochs=args.num_epochs,
                 )
                 swad_args = dict(
@@ -704,13 +710,14 @@ def main():
                     seed,
                     best_base_lr,
                     best_classifier_lr,
-                    args.lr2_mult,
+                    best_lr2_mult,
                     args.attention_epoch,
                     best_kl_lambda_start,
                     best_kl_increment,
                     best_n_converge,
                     args.n_tolerance,
                     args.tolerance_ratio,
+                    args.swad_start_epoch,
                     swad_val_acc,
                     json.dumps(test_results),
                     minutes,

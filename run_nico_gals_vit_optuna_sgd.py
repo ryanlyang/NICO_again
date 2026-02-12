@@ -490,13 +490,13 @@ def main():
     parser.add_argument("--load_if_exists", action="store_true")
 
     # Search space
-    parser.add_argument("--base_lr_low", type=float, default=1e-6)
-    parser.add_argument("--base_lr_high", type=float, default=1e-4)
-    parser.add_argument("--classifier_lr_low", type=float, default=1e-5)
-    parser.add_argument("--classifier_lr_high", type=float, default=1e-3)
+    parser.add_argument("--base_lr_low", type=float, default=1e-5)
+    parser.add_argument("--base_lr_high", type=float, default=1e-3)
+    parser.add_argument("--classifier_lr_low", type=float, default=1e-4)
+    parser.add_argument("--classifier_lr_high", type=float, default=1e-2)
     parser.add_argument("--dropout_choices", type=str, default="0.0,0.1,0.5")
-    parser.add_argument("--gals_lambda_low", type=float, default=1.0)
-    parser.add_argument("--gals_lambda_high", type=float, default=1e5)
+    parser.add_argument("--gals_lambda_low", type=float, default=1e-2)
+    parser.add_argument("--gals_lambda_high", type=float, default=1e3)
 
     # Rerun best
     parser.add_argument("--rerun_best", type=int, default=1)

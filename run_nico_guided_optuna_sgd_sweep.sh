@@ -61,6 +61,21 @@ STUDY_NAME=${STUDY_NAME:-nico_guided_sgd_${TARGET_TAG}}
 OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_guided_sgd_v1_${TARGET_TAG}.db}
 FRESH_START=${FRESH_START:-1}
 
+# Guided Optuna sweep ranges
+BASE_LR_LOW=${BASE_LR_LOW:-1e-5}
+BASE_LR_HIGH=${BASE_LR_HIGH:-1e-3}
+CLASSIFIER_LR_LOW=${CLASSIFIER_LR_LOW:-1e-4}
+CLASSIFIER_LR_HIGH=${CLASSIFIER_LR_HIGH:-1e-2}
+LR2_MULT_LOW=${LR2_MULT_LOW:-0.001}
+LR2_MULT_HIGH=${LR2_MULT_HIGH:-1.0}
+ATT_EPOCH_MIN=${ATT_EPOCH_MIN:-1}
+ATT_EPOCH_MAX=${ATT_EPOCH_MAX:-29}
+KL_START_LOW=${KL_START_LOW:-0.01}
+KL_START_HIGH=${KL_START_HIGH:-5.0}
+# Locked: no kl_increment sweep
+KL_INC_LOW=${KL_INC_LOW:-0.0}
+KL_INC_HIGH=${KL_INC_HIGH:-0.0}
+
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Missing REPO_ROOT: $REPO_ROOT" >&2
   exit 1
@@ -110,6 +125,13 @@ echo "Images: $IMAGE_ROOT"
 echo "Output: $OUTPUT_DIR"
 echo "Targets: $TARGET_DOMAINS"
 echo "Trials: $N_TRIALS"
+echo "Sweep ranges:"
+echo "  base_lr: [$BASE_LR_LOW, $BASE_LR_HIGH]"
+echo "  classifier_lr: [$CLASSIFIER_LR_LOW, $CLASSIFIER_LR_HIGH]"
+echo "  lr2_mult: [$LR2_MULT_LOW, $LR2_MULT_HIGH]"
+echo "  attention_epoch: [$ATT_EPOCH_MIN, $ATT_EPOCH_MAX]"
+echo "  kl_lambda_start: [$KL_START_LOW, $KL_START_HIGH]"
+echo "  kl_increment: [$KL_INC_LOW, $KL_INC_HIGH] (locked)"
 if [[ -n "${TIMEOUT_SECONDS}" ]]; then
   echo "Timeout: $TIMEOUT_SECONDS"
 fi
@@ -127,4 +149,16 @@ srun --unbuffered python -u run_guided_optuna_sgd.py \
   --output_dir "$OUTPUT_DIR" \
   --target $TARGET_DOMAINS \
   --n_trials "$N_TRIALS" \
+  --base_lr_low "$BASE_LR_LOW" \
+  --base_lr_high "$BASE_LR_HIGH" \
+  --classifier_lr_low "$CLASSIFIER_LR_LOW" \
+  --classifier_lr_high "$CLASSIFIER_LR_HIGH" \
+  --lr2_mult_low "$LR2_MULT_LOW" \
+  --lr2_mult_high "$LR2_MULT_HIGH" \
+  --att_epoch_min "$ATT_EPOCH_MIN" \
+  --att_epoch_max "$ATT_EPOCH_MAX" \
+  --kl_start_low "$KL_START_LOW" \
+  --kl_start_high "$KL_START_HIGH" \
+  --kl_inc_low "$KL_INC_LOW" \
+  --kl_inc_high "$KL_INC_HIGH" \
   "${EXTRA_ARGS[@]}"

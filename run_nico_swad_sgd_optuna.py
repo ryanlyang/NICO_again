@@ -267,8 +267,8 @@ def main():
     p.add_argument("--load_if_exists", action="store_true")
 
     # sweep ranges
-    p.add_argument("--lr_low", type=float, default=1e-5)
-    p.add_argument("--lr_high", type=float, default=1e-3)
+    p.add_argument("--lr_low", type=float, default=1e-4)
+    p.add_argument("--lr_high", type=float, default=1e-2)
     p.add_argument("--weight_decay_low", type=float, default=1e-6)
     p.add_argument("--weight_decay_high", type=float, default=1e-3)
     p.add_argument("--weight_decay_allow_zero", type=int, default=1)

@@ -344,8 +344,8 @@ def main():
 
     # Search space
     # LR range for SGD sweeps.
-    parser.add_argument("--lr_low", type=float, default=1e-5)
-    parser.add_argument("--lr_high", type=float, default=1e-3)
+    parser.add_argument("--lr_low", type=float, default=1e-4)
+    parser.add_argument("--lr_high", type=float, default=1e-2)
     parser.add_argument("--dropout_choices", type=str, default="0.0,0.1,0.5", help="Comma-separated dropout ps to search.")
     parser.add_argument(
         "--batch_size_choices",
