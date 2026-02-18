@@ -352,12 +352,15 @@ def _get_param_groups(model: nn.Module, base_lr: float, classifier_lr: float):
     return groups
 
 
-def compute_gals_loss(model, inputs, labels, att_map, gals_lambda):
+def compute_gals_loss(model, inputs, labels, att_map, gals_lambda, grad_criterion):
     outputs = model(inputs)
     cls_loss = nn.functional.cross_entropy(outputs, labels)
     dy_dx = torch.autograd.grad(cls_loss, inputs, retain_graph=True, create_graph=True)[0]
     att_rgb = att_map.expand_as(inputs)
-    att_loss = nn.functional.l1_loss(dy_dx, dy_dx * att_rgb)
+    if str(grad_criterion).upper() == "L2":
+        att_loss = nn.functional.mse_loss(dy_dx, dy_dx * att_rgb)
+    else:
+        att_loss = nn.functional.l1_loss(dy_dx, dy_dx * att_rgb)
     total_loss = cls_loss + gals_lambda * att_loss
     return total_loss, cls_loss, att_loss, outputs
 
@@ -385,7 +388,9 @@ def train_one_trial(model, dataloaders, args, trial=None):
             att = att.to(DEVICE)
 
             opt.zero_grad()
-            total_loss, _, _, outputs = compute_gals_loss(model, inputs, labels, att, args.gals_lambda)
+            total_loss, _, _, outputs = compute_gals_loss(
+                model, inputs, labels, att, args.gals_lambda, args.grad_criterion
+            )
             total_loss.backward()
             opt.step()
 
@@ -491,12 +496,13 @@ def main():
 
     # Search space
     parser.add_argument("--base_lr_low", type=float, default=1e-5)
-    parser.add_argument("--base_lr_high", type=float, default=1e-3)
-    parser.add_argument("--classifier_lr_low", type=float, default=1e-4)
-    parser.add_argument("--classifier_lr_high", type=float, default=1e-2)
-    parser.add_argument("--dropout_choices", type=str, default="0.0,0.1,0.5")
-    parser.add_argument("--gals_lambda_low", type=float, default=1e-2)
-    parser.add_argument("--gals_lambda_high", type=float, default=1e3)
+    parser.add_argument("--base_lr_high", type=float, default=5e-2)
+    parser.add_argument("--classifier_lr_low", type=float, default=1e-5)
+    parser.add_argument("--classifier_lr_high", type=float, default=5e-2)
+    parser.add_argument("--resnet_dropout", type=float, default=0.1)
+    parser.add_argument("--grad_criterion_choices", type=str, default="L1,L2")
+    parser.add_argument("--gals_lambda_low", type=float, default=1e2)
+    parser.add_argument("--gals_lambda_high", type=float, default=1e4)
 
     # Rerun best
     parser.add_argument("--rerun_best", type=int, default=1)
@@ -554,7 +560,9 @@ def main():
         for domain in args.target
     ]
 
-    dropout_choices = [float(x) for x in args.dropout_choices.split(",") if x.strip()]
+    grad_criterion_choices = [x.strip().upper() for x in args.grad_criterion_choices.split(",") if x.strip()]
+    if not grad_criterion_choices:
+        grad_criterion_choices = ["L1", "L2"]
     sampler = optuna.samplers.TPESampler(seed=args.optuna_seed)
     pruner = optuna.pruners.NopPruner()
     study = optuna.create_study(
@@ -586,13 +594,14 @@ def main():
         base_lr = suggest_loguniform(trial, "base_lr", args.base_lr_low, args.base_lr_high)
         classifier_lr = suggest_loguniform(trial, "classifier_lr", args.classifier_lr_low, args.classifier_lr_high)
         gals_lambda = suggest_loguniform(trial, "gals_lambda", args.gals_lambda_low, args.gals_lambda_high)
-        resnet_dropout = trial.suggest_categorical("resnet_dropout", dropout_choices)
+        grad_criterion = trial.suggest_categorical("grad_criterion", grad_criterion_choices)
         batch_size = args.batch_size
         weight_decay = args.weight_decay
 
         print(
             f"[TRIAL {trial.number}] start params={{'base_lr': {base_lr}, 'classifier_lr': {classifier_lr}, "
-            f"'weight_decay': {weight_decay} (fixed), 'batch_size': {batch_size} (fixed), 'resnet_dropout': {resnet_dropout}, "
+            f"'weight_decay': {weight_decay} (fixed), 'batch_size': {batch_size} (fixed), "
+            f"'resnet_dropout': {args.resnet_dropout} (fixed), 'grad_criterion': '{grad_criterion}', "
             f"'gals_lambda': {gals_lambda}, 'momentum': {args.momentum}, 'num_epochs': {args.num_epochs}}}",
             flush=True,
         )
@@ -621,11 +630,12 @@ def main():
             for ds in test_datasets
         ]
 
-        model = make_resnet50_with_dropout(args.num_classes, resnet_dropout).to(DEVICE)
+        model = make_resnet50_with_dropout(args.num_classes, args.resnet_dropout).to(DEVICE)
         trial_args = argparse.Namespace(
             base_lr=base_lr,
             classifier_lr=classifier_lr,
             gals_lambda=gals_lambda,
+            grad_criterion=grad_criterion,
             momentum=args.momentum,
             weight_decay=weight_decay,
             num_epochs=args.num_epochs,
@@ -667,14 +677,15 @@ def main():
         best_base_lr = float(study.best_params["base_lr"])
         best_classifier_lr = float(study.best_params["classifier_lr"])
         best_gals_lambda = float(study.best_params["gals_lambda"])
-        best_dropout = float(study.best_params.get("resnet_dropout", 0.0))
+        best_dropout = float(args.resnet_dropout)
+        best_grad_criterion = str(study.best_params.get("grad_criterion", "L1")).upper()
         best_batch_size = int(args.batch_size)
         best_weight_decay = float(args.weight_decay)
 
         rerun_path = os.path.join(output_dir, "best_rerun_seeds.csv")
         rerun_header = [
             "seed", "base_lr", "classifier_lr", "momentum", "weight_decay",
-            "batch_size", "resnet_dropout", "gals_lambda", "num_epochs",
+            "batch_size", "resnet_dropout", "grad_criterion", "gals_lambda", "num_epochs",
             "best_val_acc", "test_results_json", "minutes"
         ]
         write_header = not os.path.exists(rerun_path)
@@ -686,7 +697,8 @@ def main():
         print(
             f"Best params resolved: base_lr={best_base_lr} classifier_lr={best_classifier_lr} "
             f"momentum={args.momentum} weight_decay={best_weight_decay} batch_size={best_batch_size} "
-            f"resnet_dropout={best_dropout} gals_lambda={best_gals_lambda} num_epochs={args.num_epochs}",
+            f"resnet_dropout={best_dropout} grad_criterion={best_grad_criterion} "
+            f"gals_lambda={best_gals_lambda} num_epochs={args.num_epochs}",
             flush=True,
         )
 
@@ -719,6 +731,7 @@ def main():
                 base_lr=best_base_lr,
                 classifier_lr=best_classifier_lr,
                 gals_lambda=best_gals_lambda,
+                grad_criterion=best_grad_criterion,
                 momentum=args.momentum,
                 weight_decay=best_weight_decay,
                 num_epochs=args.num_epochs,
@@ -744,6 +757,7 @@ def main():
                     best_weight_decay,
                     best_batch_size,
                     best_dropout,
+                    best_grad_criterion,
                     best_gals_lambda,
                     args.num_epochs,
                     best_val_acc,

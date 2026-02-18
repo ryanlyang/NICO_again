@@ -432,14 +432,14 @@ def main():
     p.add_argument("--weight_decay", type=float, default=1e-5)
 
     p.add_argument("--base_lr_low", type=float, default=1e-5)
-    p.add_argument("--base_lr_high", type=float, default=1e-3)
-    p.add_argument("--classifier_lr_low", type=float, default=1e-4)
-    p.add_argument("--classifier_lr_high", type=float, default=1e-2)
+    p.add_argument("--base_lr_high", type=float, default=5e-2)
+    p.add_argument("--classifier_lr_low", type=float, default=1e-5)
+    p.add_argument("--classifier_lr_high", type=float, default=5e-2)
     p.add_argument("--lr2_mult_low", type=float, default=1e-3)
     p.add_argument("--lr2_mult_high", type=float, default=1.0)
     p.add_argument("--attention_epoch", type=int, default=15)
-    p.add_argument("--kl_lambda_low", type=float, default=0.01)
-    p.add_argument("--kl_lambda_high", type=float, default=5.0)
+    p.add_argument("--kl_lambda_low", type=float, default=0.1)
+    p.add_argument("--kl_lambda_high", type=float, default=50.0)
     p.add_argument("--kl_increment", type=float, default=0.0)
 
     # SWAD sweep params
@@ -538,7 +538,7 @@ def main():
         base_lr = suggest_loguniform(trial, "base_lr", args.base_lr_low, args.base_lr_high)
         classifier_lr = suggest_loguniform(trial, "classifier_lr", args.classifier_lr_low, args.classifier_lr_high)
         lr2_mult = suggest_loguniform(trial, "lr2_mult", args.lr2_mult_low, args.lr2_mult_high)
-        kl_lambda_start = suggest_uniform(trial, "kl_lambda_start", args.kl_lambda_low, args.kl_lambda_high)
+        kl_lambda_start = suggest_loguniform(trial, "kl_lambda_start", args.kl_lambda_low, args.kl_lambda_high)
         n_converge = suggest_int(trial, "n_converge", args.n_converge_min, args.n_converge_max)
         kl_increment = args.kl_increment
 

@@ -334,9 +334,9 @@ def main():
 
     # Search space (requested)
     parser.add_argument("--base_lr_low", type=float, default=1e-5)
-    parser.add_argument("--base_lr_high", type=float, default=1e-3)
-    parser.add_argument("--classifier_lr_low", type=float, default=1e-4)
-    parser.add_argument("--classifier_lr_high", type=float, default=1e-2)
+    parser.add_argument("--base_lr_high", type=float, default=5e-2)
+    parser.add_argument("--classifier_lr_low", type=float, default=1e-5)
+    parser.add_argument("--classifier_lr_high", type=float, default=5e-2)
     parser.add_argument("--weight_decay_low", type=float, default=1e-6)
     parser.add_argument("--weight_decay_high", type=float, default=1e-3)
 

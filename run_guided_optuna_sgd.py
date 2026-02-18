@@ -630,20 +630,19 @@ def main():
     parser.add_argument('--load_if_exists', action='store_true', help='Reuse study if it exists')
 
     # Search space (set min=max to fix a value)
-    # Wider + lower LR range for SGD sweeps (requested): 5e-7 to 5e-5.
-    parser.add_argument('--base_lr_low', type=float, default=1e-6)
-    parser.add_argument('--base_lr_high', type=float, default=1e-4)
+    parser.add_argument('--base_lr_low', type=float, default=1e-5)
+    parser.add_argument('--base_lr_high', type=float, default=5e-2)
     parser.add_argument('--classifier_lr_low', type=float, default=1e-5)
-    parser.add_argument('--classifier_lr_high', type=float, default=1e-3)
+    parser.add_argument('--classifier_lr_high', type=float, default=5e-2)
     # Multiplier applied to both LRs after attention_epoch.
-    parser.add_argument('--lr2_mult_low', type=float, default=0.1)
-    parser.add_argument('--lr2_mult_high', type=float, default=3.0)
+    parser.add_argument('--lr2_mult_low', type=float, default=1e-3)
+    parser.add_argument('--lr2_mult_high', type=float, default=1.0)
     parser.add_argument('--att_epoch_min', type=int, default=1)
     parser.add_argument('--att_epoch_max', type=int, default=29)
-    parser.add_argument('--kl_start_low', type=float, default=1.0)
+    parser.add_argument('--kl_start_low', type=float, default=0.1)
     parser.add_argument('--kl_start_high', type=float, default=50.0)
     parser.add_argument('--kl_inc_low', type=float, default=0.0)
-    parser.add_argument('--kl_inc_high', type=float, default=5.0)
+    parser.add_argument('--kl_inc_high', type=float, default=0.0)
 
     # After sweep: rerun the best hyperparameters for multiple seeds.
     parser.add_argument('--rerun_best', type=int, default=1, help='After sweep, rerun best params for multiple seeds (1/0).')
@@ -652,6 +651,21 @@ def main():
     parser.add_argument('--rerun_seeds', type=str, default='', help='Comma-separated explicit rerun seeds.')
 
     args = parser.parse_args()
+
+    # Keep sweep ranges aligned with the active experiment contract even when an older
+    # sbatch script passes stale range flags.
+    args.base_lr_low = 1e-5
+    args.base_lr_high = 5e-2
+    args.classifier_lr_low = 1e-5
+    args.classifier_lr_high = 5e-2
+    args.lr2_mult_low = 1e-3
+    args.lr2_mult_high = 1.0
+    args.att_epoch_min = 1
+    args.att_epoch_max = 29
+    args.kl_start_low = 0.1
+    args.kl_start_high = 50.0
+    args.kl_inc_low = 0.0
+    args.kl_inc_high = 0.0
 
     targets = [d.lower() for d in args.target]
     unknown = [d for d in targets if d not in ALL_DOMAINS]
@@ -756,7 +770,7 @@ def main():
         classifier_lr = suggest_loguniform(trial, 'classifier_lr', args.classifier_lr_low, args.classifier_lr_high)
         lr2_mult = suggest_loguniform(trial, 'lr2_mult', args.lr2_mult_low, args.lr2_mult_high)
         attention_epoch = suggest_int(trial, 'attention_epoch', args.att_epoch_min, args.att_epoch_max)
-        kl_lambda_start = suggest_uniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
+        kl_lambda_start = suggest_loguniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
         kl_increment = suggest_uniform(trial, 'kl_increment', args.kl_inc_low, args.kl_inc_high)
         attention_epoch = min(attention_epoch, max(1, args.num_epochs - 1))
         print(
@@ -847,7 +861,7 @@ def main():
         best_classifier_lr_post = best_classifier_lr * best_lr2_mult
         best_attention_epoch = int(study.best_params['attention_epoch'])
         best_kl_lambda_start = float(study.best_params['kl_lambda_start'])
-        best_kl_increment = float(study.best_params.get('kl_increment', best_kl_lambda_start / 10.0))
+        best_kl_increment = float(study.best_params.get('kl_increment', 0.0))
 
         rerun_path = os.path.join(output_dir, "best_rerun_seeds.csv")
         rerun_masks_path = os.path.join(output_dir, "best_rerun_seeds_masks.csv")

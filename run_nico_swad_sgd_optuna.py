@@ -141,6 +141,24 @@ def make_resnet50_with_dropout(num_classes: int, dropout_p: float) -> nn.Module:
     return base
 
 
+def _get_param_groups(model: nn.Module, base_lr: float, classifier_lr: float):
+    base_params = []
+    classifier_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if name.startswith("fc."):
+            classifier_params.append(param)
+        else:
+            base_params.append(param)
+    groups = []
+    if base_params:
+        groups.append({"params": base_params, "lr": base_lr})
+    if classifier_params:
+        groups.append({"params": classifier_params, "lr": classifier_lr})
+    return groups
+
+
 def evaluate_loss_acc(model, loader):
     model.eval()
     total, correct = 0, 0
@@ -184,7 +202,11 @@ def train_swad_one_trial(model, dataloaders, args, swad_args):
     train_loader = dataloaders["train"]
     val_loader = dataloaders["val"]
 
-    opt = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    opt = optim.SGD(
+        _get_param_groups(model, args.base_lr, args.classifier_lr),
+        momentum=args.momentum,
+        weight_decay=args.weight_decay,
+    )
     sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
 
     swad = LossValley(swad_args["n_converge"], swad_args["n_tolerance"], swad_args["tolerance_ratio"])
@@ -267,11 +289,11 @@ def main():
     p.add_argument("--load_if_exists", action="store_true")
 
     # sweep ranges
-    p.add_argument("--lr_low", type=float, default=1e-4)
-    p.add_argument("--lr_high", type=float, default=1e-2)
-    p.add_argument("--weight_decay_low", type=float, default=1e-6)
-    p.add_argument("--weight_decay_high", type=float, default=1e-3)
-    p.add_argument("--weight_decay_allow_zero", type=int, default=1)
+    p.add_argument("--base_lr_low", type=float, default=1e-5)
+    p.add_argument("--base_lr_high", type=float, default=5e-2)
+    p.add_argument("--classifier_lr_low", type=float, default=1e-5)
+    p.add_argument("--classifier_lr_high", type=float, default=5e-2)
+    p.add_argument("--weight_decay", type=float, default=1e-5)
     p.add_argument("--tolerance_ratio_low", type=float, default=0.1)
     p.add_argument("--tolerance_ratio_high", type=float, default=0.5)
     p.add_argument("--n_converge", type=int, default=3)
@@ -354,22 +376,16 @@ def main():
             writer.writerow(row)
 
     def objective(trial):
-        lr = suggest_loguniform(trial, "lr", args.lr_low, args.lr_high)
-        if int(args.weight_decay_allow_zero) == 1:
-            wd_is_zero = trial.suggest_categorical("wd_is_zero", [True, False])
-            if wd_is_zero:
-                weight_decay = 0.0
-            else:
-                weight_decay = suggest_loguniform(trial, "weight_decay", args.weight_decay_low, args.weight_decay_high)
-        else:
-            weight_decay = suggest_loguniform(trial, "weight_decay", args.weight_decay_low, args.weight_decay_high)
+        base_lr = suggest_loguniform(trial, "base_lr", args.base_lr_low, args.base_lr_high)
+        classifier_lr = suggest_loguniform(trial, "classifier_lr", args.classifier_lr_low, args.classifier_lr_high)
+        weight_decay = args.weight_decay
 
         tolerance_ratio = trial.suggest_float("tolerance_ratio", args.tolerance_ratio_low, args.tolerance_ratio_high)
         n_tolerance = trial.suggest_int("n_tolerance", args.n_tolerance_min, args.n_tolerance_max)
 
         print(
-            f"[TRIAL {trial.number}] start params={{'lr': {lr}, 'momentum': {args.momentum}, "
-            f"'weight_decay': {weight_decay}, 'batch_size': {args.batch_size}, "
+            f"[TRIAL {trial.number}] start params={{'base_lr': {base_lr}, 'classifier_lr': {classifier_lr}, "
+            f"'momentum': {args.momentum}, 'weight_decay': {weight_decay} (fixed), 'batch_size': {args.batch_size}, "
             f"'resnet_dropout': {args.resnet_dropout}, 'n_converge': {args.n_converge}, "
             f"'n_tolerance': {n_tolerance}, 'tolerance_ratio': {tolerance_ratio}, "
             f"'num_epochs': {args.num_epochs}}}",
@@ -396,7 +412,8 @@ def main():
 
         model = make_resnet50_with_dropout(args.num_classes, args.resnet_dropout).to(DEVICE)
         trial_args = argparse.Namespace(
-            lr=lr,
+            base_lr=base_lr,
+            classifier_lr=classifier_lr,
             momentum=args.momentum,
             weight_decay=weight_decay,
             num_epochs=args.num_epochs,
@@ -440,15 +457,16 @@ def main():
 
     if int(args.rerun_best) == 1:
         seeds = parse_seeds(args.rerun_seed_start, args.rerun_num_seeds, args.rerun_seeds)
-        best_lr = float(study.best_params["lr"])
+        best_base_lr = float(study.best_params["base_lr"])
+        best_classifier_lr = float(study.best_params["classifier_lr"])
         best_dropout = float(args.resnet_dropout)
-        best_weight_decay = 0.0 if study.best_params.get("wd_is_zero", False) else float(study.best_params.get("weight_decay", args.weight_decay_low))
+        best_weight_decay = float(args.weight_decay)
         best_n_tolerance = int(study.best_params.get("n_tolerance", args.n_tolerance_min))
         best_tolerance_ratio = float(study.best_params.get("tolerance_ratio", args.tolerance_ratio_low))
 
         rerun_path = os.path.join(output_dir, "best_rerun_seeds.csv")
         rerun_header = [
-            "seed", "lr", "momentum", "weight_decay", "batch_size", "resnet_dropout",
+            "seed", "base_lr", "classifier_lr", "momentum", "weight_decay", "batch_size", "resnet_dropout",
             "n_converge", "n_tolerance", "tolerance_ratio",
             "num_epochs", "swad_val_acc", "test_results_json", "minutes"
         ]
@@ -459,7 +477,8 @@ def main():
 
         print(f"\n=== Rerun best params for {len(seeds)} seeds ===", flush=True)
         print(
-            f"Best params resolved: lr={best_lr} momentum={args.momentum} weight_decay={best_weight_decay} "
+            f"Best params resolved: base_lr={best_base_lr} classifier_lr={best_classifier_lr} "
+            f"momentum={args.momentum} weight_decay={best_weight_decay} "
             f"batch_size={args.batch_size} resnet_dropout={best_dropout} "
             f"n_converge={args.n_converge} n_tolerance={best_n_tolerance} tolerance_ratio={best_tolerance_ratio}",
             flush=True,
@@ -486,7 +505,8 @@ def main():
 
             model = make_resnet50_with_dropout(args.num_classes, best_dropout).to(DEVICE)
             run_args = argparse.Namespace(
-                lr=best_lr,
+                base_lr=best_base_lr,
+                classifier_lr=best_classifier_lr,
                 momentum=args.momentum,
                 weight_decay=best_weight_decay,
                 num_epochs=args.num_epochs,
@@ -510,7 +530,8 @@ def main():
             with open(rerun_path, "a", newline="") as f:
                 csv.writer(f).writerow([
                     seed,
-                    best_lr,
+                    best_base_lr,
+                    best_classifier_lr,
                     args.momentum,
                     best_weight_decay,
                     args.batch_size,
