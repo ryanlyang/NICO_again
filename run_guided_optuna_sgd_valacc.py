@@ -393,7 +393,8 @@ def _get_param_groups(model, base_lr, classifier_lr):
 
 
 def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
-    best_wts = copy.deepcopy(model.state_dict())
+    best_wts_val = copy.deepcopy(model.state_dict())
+    best_wts_optim = copy.deepcopy(model.state_dict())
     best_val_acc = -1.0
     best_optim_value = -1.0
 
@@ -410,7 +411,8 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
             param_groups = _get_param_groups(model, base_lr_post, classifier_lr_post)
             opt = optim.SGD(param_groups, momentum=MOMENTUM, weight_decay=args.weight_decay)
             sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
-            best_wts = copy.deepcopy(model.state_dict())
+            best_wts_val = copy.deepcopy(model.state_dict())
+            best_wts_optim = copy.deepcopy(model.state_dict())
             best_val_acc = -1.0
             best_optim_value = -1.0
 
@@ -496,12 +498,13 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
                 epoch_acc = running_corrects.double() / max(total, 1)
                 if epoch_acc > best_val_acc:
                     best_val_acc = epoch_acc
-                    best_wts = copy.deepcopy(model.state_dict())
+                    best_wts_val = copy.deepcopy(model.state_dict())
 
                 epoch_attn_rev = running_attn_rev / max(total, 1)
                 optim_value = float(epoch_acc) * math.exp(-float(args.beta) * epoch_attn_rev)
-                if optim_value > best_optim_value:
+                if epoch >= args.attention_epoch and optim_value > best_optim_value:
                     best_optim_value = optim_value
+                    best_wts_optim = copy.deepcopy(model.state_dict())
 
                 # For selection, mimic the reference logic: only start selecting by optim_value
                 print(
@@ -516,10 +519,16 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
 
     if best_optim_value < 0.0:
         best_optim_value = float(best_val_acc)
+        best_wts_optim = copy.deepcopy(best_wts_val)
 
-    # End-of-trial: load the checkpoint selected by best val accuracy.
-    model.load_state_dict(best_wts)
-    return float(best_val_acc), float(best_optim_value)
+    # End-of-trial: keep default behavior by loading the checkpoint selected by best val accuracy.
+    model.load_state_dict(best_wts_val)
+    return (
+        float(best_val_acc),
+        float(best_optim_value),
+        best_wts_val,
+        best_wts_optim,
+    )
 
 
 # =============================================================================
@@ -623,20 +632,19 @@ def main():
     parser.add_argument('--load_if_exists', action='store_true', help='Reuse study if it exists')
 
     # Search space (set min=max to fix a value)
-    # Wider + lower LR range for SGD sweeps (requested): 5e-7 to 5e-5.
-    parser.add_argument('--base_lr_low', type=float, default=1e-6)
-    parser.add_argument('--base_lr_high', type=float, default=1e-4)
+    parser.add_argument('--base_lr_low', type=float, default=1e-5)
+    parser.add_argument('--base_lr_high', type=float, default=5e-2)
     parser.add_argument('--classifier_lr_low', type=float, default=1e-5)
-    parser.add_argument('--classifier_lr_high', type=float, default=1e-3)
+    parser.add_argument('--classifier_lr_high', type=float, default=5e-2)
     # Multiplier applied to both LRs after attention_epoch.
-    parser.add_argument('--lr2_mult_low', type=float, default=0.1)
-    parser.add_argument('--lr2_mult_high', type=float, default=3.0)
+    parser.add_argument('--lr2_mult_low', type=float, default=1e-3)
+    parser.add_argument('--lr2_mult_high', type=float, default=1.0)
     parser.add_argument('--att_epoch_min', type=int, default=1)
     parser.add_argument('--att_epoch_max', type=int, default=29)
-    parser.add_argument('--kl_start_low', type=float, default=1.0)
+    parser.add_argument('--kl_start_low', type=float, default=0.1)
     parser.add_argument('--kl_start_high', type=float, default=50.0)
     parser.add_argument('--kl_inc_low', type=float, default=0.0)
-    parser.add_argument('--kl_inc_high', type=float, default=5.0)
+    parser.add_argument('--kl_inc_high', type=float, default=0.0)
 
     # After sweep: rerun the best hyperparameters for multiple seeds.
     parser.add_argument('--rerun_best', type=int, default=1, help='After sweep, rerun best params for multiple seeds (1/0).')
@@ -645,6 +653,21 @@ def main():
     parser.add_argument('--rerun_seeds', type=str, default='', help='Comma-separated explicit rerun seeds.')
 
     args = parser.parse_args()
+
+    # Keep sweep ranges aligned with the active experiment contract even when an older
+    # sbatch script passes stale range flags.
+    args.base_lr_low = 1e-5
+    args.base_lr_high = 5e-2
+    args.classifier_lr_low = 1e-5
+    args.classifier_lr_high = 5e-2
+    args.lr2_mult_low = 1e-3
+    args.lr2_mult_high = 1.0
+    args.att_epoch_min = 1
+    args.att_epoch_max = 29
+    args.kl_start_low = 0.1
+    args.kl_start_high = 50.0
+    args.kl_inc_low = 0.0
+    args.kl_inc_high = 0.0
 
     targets = [d.lower() for d in args.target]
     unknown = [d for d in targets if d not in ALL_DOMAINS]
@@ -729,12 +752,13 @@ def main():
 
     trial_log_path = os.path.join(output_dir, "optuna_trials.csv")
 
-    def log_trial(trial, best_val_acc, best_optim_value, test_results):
+    def log_trial(trial, best_val_acc, best_optim_value, test_results_val, test_results_optim):
         row = {
             "trial": trial.number,
             "best_val_acc": best_val_acc,
             "best_optim_value": best_optim_value,
-            "test_results": json.dumps(test_results),
+            "test_results_valacc": json.dumps(test_results_val),
+            "test_results_optim": json.dumps(test_results_optim),
             "params": json.dumps(trial.params),
         }
         write_header = not os.path.exists(trial_log_path)
@@ -749,7 +773,7 @@ def main():
         classifier_lr = suggest_loguniform(trial, 'classifier_lr', args.classifier_lr_low, args.classifier_lr_high)
         lr2_mult = suggest_loguniform(trial, 'lr2_mult', args.lr2_mult_low, args.lr2_mult_high)
         attention_epoch = suggest_int(trial, 'attention_epoch', args.att_epoch_min, args.att_epoch_max)
-        kl_lambda_start = suggest_uniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
+        kl_lambda_start = suggest_loguniform(trial, 'kl_lambda_start', args.kl_start_low, args.kl_start_high)
         kl_increment = suggest_uniform(trial, 'kl_increment', args.kl_inc_low, args.kl_inc_high)
         attention_epoch = min(attention_epoch, max(1, args.num_epochs - 1))
         print(
@@ -786,16 +810,26 @@ def main():
         )
 
         try:
-            best_val_acc, best_optim_value = train_one_trial(model, dataloaders, dataset_sizes, trial_args, trial=trial)
-            test_results = evaluate_test(model, test_loaders, args.target)
+            best_val_acc, best_optim_value, best_wts_val, best_wts_optim = train_one_trial(
+                model, dataloaders, dataset_sizes, trial_args, trial=trial
+            )
+
+            model.load_state_dict(best_wts_val)
+            test_results_val = evaluate_test(model, test_loaders, args.target)
+
+            model.load_state_dict(best_wts_optim)
+            test_results_optim = evaluate_test(model, test_loaders, args.target)
+
             if trial is not None:
-                trial.set_user_attr("test_results", test_results)
+                trial.set_user_attr("test_results", test_results_val)
+                trial.set_user_attr("test_results_valacc", test_results_val)
+                trial.set_user_attr("test_results_optim", test_results_optim)
                 trial.set_user_attr("best_val_acc", float(best_val_acc))
                 trial.set_user_attr("best_optim_value", float(best_optim_value))
-            log_trial(trial, best_val_acc, best_optim_value, test_results)
+            log_trial(trial, best_val_acc, best_optim_value, test_results_val, test_results_optim)
             print(
                 f"[TRIAL {trial.number}] done best_val_acc={best_val_acc:.6f} best_optim_value={best_optim_value:.6f} "
-                f"test={test_results}",
+                f"test_valacc={test_results_val} test_optim={test_results_optim}",
                 flush=True
             )
         finally:
@@ -812,6 +846,8 @@ def main():
         'best_value': study.best_value,
         'best_params': study.best_params,
         'best_test_results': best_trial.user_attrs.get("test_results", None),
+        'best_test_results_valacc': best_trial.user_attrs.get("test_results_valacc", None),
+        'best_test_results_optim': best_trial.user_attrs.get("test_results_optim", None),
         'best_val_acc': best_trial.user_attrs.get("best_val_acc", None),
         'best_optim_value': best_trial.user_attrs.get("best_optim_value", None),
         'n_trials': len(study.trials)
@@ -827,7 +863,12 @@ def main():
         print("Best trial val_acc:", best["best_val_acc"])
     if best_trial.user_attrs.get("best_optim_value", None) is not None:
         print("Best trial optim_value:", best_trial.user_attrs.get("best_optim_value"))
-    if best["best_test_results"] is not None:
+    if best["best_test_results_valacc"] is not None:
+        print("Best trial test results (val-ckpt):", best["best_test_results_valacc"])
+    if best["best_test_results_optim"] is not None:
+        print("Best trial test results (optim-ckpt):", best["best_test_results_optim"])
+    elif best["best_test_results"] is not None:
+        # Backward-compatible fallback if only the old key exists.
         print("Best trial test results:", best["best_test_results"])
     else:
         print("Best trial test results: not found in trial user_attrs")
@@ -843,7 +884,7 @@ def main():
         best_classifier_lr_post = best_classifier_lr * best_lr2_mult
         best_attention_epoch = int(study.best_params['attention_epoch'])
         best_kl_lambda_start = float(study.best_params['kl_lambda_start'])
-        best_kl_increment = float(study.best_params.get('kl_increment', best_kl_lambda_start / 10.0))
+        best_kl_increment = float(study.best_params.get('kl_increment', 0.0))
 
         rerun_path = os.path.join(output_dir, "best_rerun_seeds.csv")
         rerun_masks_path = os.path.join(output_dir, "best_rerun_seeds_masks.csv")
@@ -851,7 +892,8 @@ def main():
             "seed", "base_lr", "classifier_lr", "lr2_mult",
             "base_lr_post", "classifier_lr_post",
             "attention_epoch", "kl_lambda_start", "kl_increment",
-            "best_val_acc", "test_results_json", "minutes"
+            "best_val_acc", "best_optim_value",
+            "test_results_val_json", "test_results_optim_json", "minutes"
         ]
         write_header = not os.path.exists(rerun_path)
         if write_header:
@@ -935,14 +977,21 @@ def main():
                 )
 
                 start = time.time()
-                best_val_acc, best_optim_value = train_one_trial(model, dataloaders_m, ds_sizes_m, run_args, trial=None)
-                test_results = evaluate_test(model, test_loaders_m, args.target)
+                best_val_acc, best_optim_value, best_wts_val, best_wts_optim = train_one_trial(
+                    model, dataloaders_m, ds_sizes_m, run_args, trial=None
+                )
+
+                model.load_state_dict(best_wts_val)
+                test_results_val = evaluate_test(model, test_loaders_m, args.target)
+
+                model.load_state_dict(best_wts_optim)
+                test_results_optim = evaluate_test(model, test_loaders_m, args.target)
                 minutes = (time.time() - start) / 60.0
 
                 print(
                     f"[RERUN mask={os.path.basename(mask_root)} seed={seed}] "
                     f"best_val_acc={best_val_acc:.6f} best_optim_value={best_optim_value:.6f} "
-                    f"test={test_results} time={minutes:.1f}m",
+                    f"test_valacc={test_results_val} test_optim={test_results_optim} time={minutes:.1f}m",
                     flush=True,
                 )
 
@@ -957,7 +1006,9 @@ def main():
                     best_kl_lambda_start,
                     best_kl_increment,
                     best_val_acc,
-                    json.dumps(test_results),
+                    best_optim_value,
+                    json.dumps(test_results_val),
+                    json.dumps(test_results_optim),
                     minutes,
                 ]
 

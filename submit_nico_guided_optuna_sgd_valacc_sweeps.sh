@@ -15,7 +15,7 @@ mkdir -p "$SCRIPT_DIR/logsNICO"
 TIMEOUT_SECONDS=${TIMEOUT_SECONDS-}
 N_TRIALS=${N_TRIALS:-50}
 
-for TARGET in "autumn" "rock" "dim" "grass" "outdoor" "water"; do
+for TARGET in "autumn rock" "dim grass" "outdoor water"; do
   TARGET_TAG=$(echo "$TARGET" | tr ' ' '-')
   sbatch --export=ALL,REPO_ROOT="$REPO_ROOT",TXTLIST_DIR="$TXTLIST_DIR",MASK_ROOT="$MASK_ROOT",IMAGE_ROOT="$IMAGE_ROOT",OUTPUT_DIR="$OUTPUT_DIR",TARGET_DOMAINS="$TARGET",TARGET_TAG="$TARGET_TAG",TIMEOUT_SECONDS="$TIMEOUT_SECONDS",N_TRIALS="$N_TRIALS",FRESH_START=1,STUDY_NAME="nico_guided_sgd_valacc_${TARGET_TAG}",OPTUNA_STORAGE="${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_guided_sgd_valacc_v1_${TARGET_TAG}.db}" \
     "$JOB_SCRIPT"
