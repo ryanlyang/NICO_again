@@ -2,7 +2,7 @@
 """
 Optuna hyperparameter search for guided CNN on NICO++ (official splits).
 - Target domains are provided at runtime; source domains are remaining ones.
-- Objective: maximize validation accuracy on official val split.
+- Objective: maximize log_optim_num = log(val_acc) - beta * IG_forward_KL.
 """
 
 import os
@@ -41,7 +41,9 @@ DEFAULT_ATTENTION_EPOCH = 15  # will be clamped to [1, num_epochs-1]
 DEFAULT_KL_LAMBDA_START = 15.0
 DEFAULT_KL_INCREMENT = 1.5
 VAL_SPLIT_RATIO = 0.16
-BETA_DEFAULT = 0.1
+BETA_DEFAULT = 10.0
+IG_STEPS_DEFAULT = 16
+OPTIM_EPS_DEFAULT = 1e-12
 
 SEED = 59
 DEFAULT_TXTLIST_DIR = "/home/ryreu/guided_cnn/NICO_again/NICO_again/txtlist"
@@ -367,6 +369,32 @@ def input_grad_saliency(model, inputs, labels):
     return sal_norm
 
 
+def integrated_gradients_saliency(model, inputs, labels, steps=IG_STEPS_DEFAULT):
+    """
+    Integrated gradients saliency:
+      IG = (x - x0) * average_alpha d(logit_y)/d(x0 + alpha * (x - x0))
+    Uses zero baseline. Returns (B,H,W) normalized to [0,1].
+    """
+    baseline = torch.zeros_like(inputs)
+    delta = inputs - baseline
+    total_grads = torch.zeros_like(inputs)
+
+    for alpha in torch.linspace(1.0 / steps, 1.0, steps, device=inputs.device):
+        x = (baseline + alpha * delta).detach().requires_grad_(True)
+        model.zero_grad(set_to_none=True)
+        outputs, _ = model(x)
+        class_scores = outputs[torch.arange(labels.size(0), device=outputs.device), labels]
+        grads = torch.autograd.grad(class_scores.sum(), x, retain_graph=False, create_graph=False)[0]
+        total_grads += grads
+
+    avg_grads = total_grads / float(steps)
+    ig = (delta * avg_grads).abs().sum(dim=1)
+    flat = ig.view(ig.size(0), -1)
+    mn, _ = flat.min(dim=1, keepdim=True)
+    mx, _ = flat.max(dim=1, keepdim=True)
+    return ((flat - mn) / (mx - mn + 1e-8)).view_as(ig)
+
+
 # =============================================================================
 # TRAINING
 # =============================================================================
@@ -393,9 +421,9 @@ def _get_param_groups(model, base_lr, classifier_lr):
 
 
 def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
-    best_wts = copy.deepcopy(model.state_dict())
     best_val_acc = -1.0
-    best_optim_value = -1.0
+    best_log_optim_value = float("-inf")
+    best_wts_val = copy.deepcopy(model.state_dict())
     best_wts_optim = copy.deepcopy(model.state_dict())
 
     param_groups = _get_param_groups(model, args.base_lr, args.classifier_lr)
@@ -411,9 +439,9 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
             param_groups = _get_param_groups(model, base_lr_post, classifier_lr_post)
             opt = optim.SGD(param_groups, momentum=MOMENTUM, weight_decay=args.weight_decay)
             sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.num_epochs)
-            best_wts = copy.deepcopy(model.state_dict())
-            best_val_acc = -1.0
-            best_optim_value = -1.0
+            # Keep best_val checkpoint across all epochs for side-by-side reporting.
+            # Reset only optim-num selection at the phase switch (same as prior behavior).
+            best_log_optim_value = float("-inf")
             best_wts_optim = copy.deepcopy(model.state_dict())
 
         if epoch > args.attention_epoch:
@@ -426,7 +454,7 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
             running_loss = 0.0
             running_corrects = 0
             running_attn_loss = 0.0
-            running_attn_rev = 0.0
+            running_ig_fwd = 0.0
             total = 0
 
             for batch in dataloaders[phase]:
@@ -485,48 +513,56 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
                 total += inputs.size(0)
 
                 if not is_train:
-                    # Optim-value saliency metric: input gradients + reverse KL vs GT mask.
+                    # Optim-num side metric: Integrated Gradients + forward KL vs GT mask.
                     with torch.enable_grad():
-                        sal = input_grad_saliency(model, inputs, labels)  # (B,H,W)
-                    _, rev_kl = compute_attn_losses(sal, gt_masks.squeeze(1))
-                    running_attn_rev += rev_kl.item() * inputs.size(0)
+                        ig_sal = integrated_gradients_saliency(
+                            model, inputs, labels, steps=int(args.ig_steps)
+                        )  # (B,H,W)
+                    fwd_kl, _ = compute_attn_losses(ig_sal, gt_masks.squeeze(1))
+                    running_ig_fwd += fwd_kl.item() * inputs.size(0)
 
             if is_train:
                 sch.step()
 
             if phase == 'val':
                 epoch_acc = running_corrects.double() / max(total, 1)
-                if epoch_acc > best_val_acc:
-                    best_val_acc = epoch_acc
-                    best_wts = copy.deepcopy(model.state_dict())
+                epoch_acc_float = float(epoch_acc)
+                if epoch_acc_float > best_val_acc:
+                    best_val_acc = epoch_acc_float
+                    best_wts_val = copy.deepcopy(model.state_dict())
 
-                epoch_attn_rev = running_attn_rev / max(total, 1)
-                optim_value = float(epoch_acc) * math.exp(-float(args.beta) * epoch_attn_rev)
+                epoch_ig_fwd = running_ig_fwd / max(total, 1)
+                log_optim_value = math.log(max(epoch_acc_float, float(args.optim_eps))) - (
+                    float(args.beta) * float(epoch_ig_fwd)
+                )
 
                 # For selection, mimic the reference logic: only start selecting by optim_value
                 # once attention has begun (same epoch indexing convention).
-                if epoch >= args.attention_epoch and optim_value > best_optim_value:
-                    best_optim_value = optim_value
+                if epoch >= args.attention_epoch and log_optim_value > best_log_optim_value:
+                    best_log_optim_value = log_optim_value
                     best_wts_optim = copy.deepcopy(model.state_dict())
 
                 print(
-                    f"[Epoch {epoch}] val_acc={float(epoch_acc):.6f} rev_kl={epoch_attn_rev:.6f} "
-                    f"optim_value={optim_value:.6f}",
+                    f"[Epoch {epoch}] val_acc={epoch_acc_float:.6f} ig_fwd_kl={epoch_ig_fwd:.6f} "
+                    f"log_optim_num={log_optim_value:.6f}",
                     flush=True
                 )
 
         if trial is not None:
             # No pruning, but keep reporting for visibility.
-            trial.report(float(best_optim_value), epoch)
+            report_value = best_log_optim_value
+            if not math.isfinite(report_value):
+                report_value = math.log(max(best_val_acc, float(args.optim_eps)))
+            trial.report(float(report_value), epoch)
 
     # If attention never started (shouldn't happen in normal configs), fall back.
-    if best_optim_value < 0.0:
-        best_optim_value = float(best_val_acc)
-        best_wts_optim = copy.deepcopy(best_wts)
+    if not math.isfinite(best_log_optim_value):
+        best_log_optim_value = math.log(max(best_val_acc, float(args.optim_eps)))
+        best_wts_optim = copy.deepcopy(best_wts_val)
 
-    # End-of-trial: load the checkpoint selected by best optim_value.
+    # End-of-trial: load the checkpoint selected by best log-optim.
     model.load_state_dict(best_wts_optim)
-    return float(best_optim_value), float(best_val_acc)
+    return float(best_log_optim_value), float(best_val_acc), best_wts_optim, best_wts_val
 
 
 # =============================================================================
@@ -619,7 +655,11 @@ def main():
     parser.add_argument('--output_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--num_workers', type=int, default=8, help='Number of workers')
     parser.add_argument('--seed', type=int, default=SEED, help='Random seed')
-    parser.add_argument('--beta', type=float, default=BETA_DEFAULT, help='optim_value beta coefficient')
+    parser.add_argument('--beta', type=float, default=BETA_DEFAULT, help='log_optim_num beta coefficient')
+    parser.add_argument('--ig_steps', type=int, default=IG_STEPS_DEFAULT,
+                        help='Integrated gradients steps for log_optim_num')
+    parser.add_argument('--optim_eps', type=float, default=OPTIM_EPS_DEFAULT,
+                        help='Numerical epsilon for log(val_acc)')
 
     # Optuna settings
     parser.add_argument('--n_trials', type=int, default=20, help='Number of Optuna trials')
@@ -750,12 +790,13 @@ def main():
 
     trial_log_path = os.path.join(output_dir, "optuna_trials.csv")
 
-    def log_trial(trial, best_optim_value, best_val_acc, test_results):
+    def log_trial(trial, best_log_optim_value, best_val_acc, test_results_optim, test_results_valacc):
         row = {
             "trial": trial.number,
-            "best_optim_value": best_optim_value,
+            "best_log_optim_value": best_log_optim_value,
             "best_val_acc": best_val_acc,
-            "test_results": json.dumps(test_results),
+            "test_results_optim": json.dumps(test_results_optim),
+            "test_results_valacc": json.dumps(test_results_valacc),
             "params": json.dumps(trial.params),
         }
         write_header = not os.path.exists(trial_log_path)
@@ -804,19 +845,31 @@ def main():
             kl_increment=kl_increment,
             num_epochs=args.num_epochs,
             beta=float(args.beta),
+            ig_steps=int(args.ig_steps),
+            optim_eps=float(args.optim_eps),
         )
 
         try:
-            best_optim_value, best_val_acc = train_one_trial(model, dataloaders, dataset_sizes, trial_args, trial=trial)
-            test_results = evaluate_test(model, test_loaders, args.target)
+            best_log_optim_value, best_val_acc, best_wts_optim, best_wts_val = train_one_trial(
+                model, dataloaders, dataset_sizes, trial_args, trial=trial
+            )
+            model.load_state_dict(best_wts_optim)
+            test_results_optim = evaluate_test(model, test_loaders, args.target)
+            model.load_state_dict(best_wts_val)
+            test_results_valacc = evaluate_test(model, test_loaders, args.target)
             if trial is not None:
-                trial.set_user_attr("test_results", test_results)
+                trial.set_user_attr("test_results", test_results_optim)
+                trial.set_user_attr("test_results_optim", test_results_optim)
+                trial.set_user_attr("test_results_valacc", test_results_valacc)
                 trial.set_user_attr("best_val_acc", float(best_val_acc))
-                trial.set_user_attr("best_optim_value", float(best_optim_value))
-            log_trial(trial, best_optim_value, best_val_acc, test_results)
+                trial.set_user_attr("best_log_optim_value", float(best_log_optim_value))
+            log_trial(
+                trial, best_log_optim_value, best_val_acc, test_results_optim, test_results_valacc
+            )
             print(
-                f"[TRIAL {trial.number}] done best_optim_value={best_optim_value:.6f} best_val_acc={best_val_acc:.6f} "
-                f"test={test_results}",
+                f"[TRIAL {trial.number}] done best_log_optim_value={best_log_optim_value:.6f} "
+                f"best_val_acc={best_val_acc:.6f} test_optim={test_results_optim} "
+                f"test_valacc={test_results_valacc}",
                 flush=True
             )
         finally:
@@ -824,15 +877,17 @@ def main():
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        return best_optim_value
+        return best_log_optim_value
 
     study.optimize(objective, n_trials=args.n_trials, timeout=args.timeout)
 
     best_trial = study.best_trial
     best = {
-        'best_value': study.best_value,
+        'best_log_optim_value': study.best_value,
         'best_params': study.best_params,
-        'best_test_results': best_trial.user_attrs.get("test_results", None),
+        'best_test_results_optim': best_trial.user_attrs.get("test_results_optim", None),
+        'best_test_results_valacc': best_trial.user_attrs.get("test_results_valacc", None),
+        'best_log_optim_value_trial': best_trial.user_attrs.get("best_log_optim_value", None),
         'best_val_acc': best_trial.user_attrs.get("best_val_acc", None),
         'n_trials': len(study.trials)
     }
@@ -841,12 +896,16 @@ def main():
     with open(best_path, 'w') as f:
         json.dump(best, f, indent=2)
 
-    print("Best optim_value:", study.best_value)
+    print("Best log_optim_num:", study.best_value)
     print("Best params:", study.best_params)
+    if best["best_log_optim_value_trial"] is not None:
+        print("Best trial log_optim_num:", best["best_log_optim_value_trial"])
     if best["best_val_acc"] is not None:
         print("Best trial val_acc:", best["best_val_acc"])
-    if best["best_test_results"] is not None:
-        print("Best trial test results:", best["best_test_results"])
+    if best["best_test_results_optim"] is not None:
+        print("Best trial test results (optim-ckpt):", best["best_test_results_optim"])
+    if best["best_test_results_valacc"] is not None:
+        print("Best trial test results (val-ckpt):", best["best_test_results_valacc"])
     else:
         print("Best trial test results: not found in trial user_attrs")
     print("Saved:", best_path)
@@ -869,7 +928,8 @@ def main():
             "seed", "base_lr", "classifier_lr", "lr2_mult",
             "base_lr_post", "classifier_lr_post",
             "attention_epoch", "kl_lambda_start", "kl_increment",
-            "best_val_acc", "test_results_json", "minutes"
+            "best_log_optim_value", "best_val_acc",
+            "test_results_optim_json", "test_results_valacc_json", "minutes"
         ]
         write_header = not os.path.exists(rerun_path)
         if write_header:
@@ -950,17 +1010,25 @@ def main():
                     kl_increment=best_kl_increment,
                     num_epochs=args.num_epochs,
                     beta=float(args.beta),
+                    ig_steps=int(args.ig_steps),
+                    optim_eps=float(args.optim_eps),
                 )
 
                 start = time.time()
-                best_optim_value, best_val_acc = train_one_trial(model, dataloaders_m, ds_sizes_m, run_args, trial=None)
-                test_results = evaluate_test(model, test_loaders_m, args.target)
+                best_log_optim_value, best_val_acc, best_wts_optim, best_wts_val = train_one_trial(
+                    model, dataloaders_m, ds_sizes_m, run_args, trial=None
+                )
+                model.load_state_dict(best_wts_optim)
+                test_results_optim = evaluate_test(model, test_loaders_m, args.target)
+                model.load_state_dict(best_wts_val)
+                test_results_valacc = evaluate_test(model, test_loaders_m, args.target)
                 minutes = (time.time() - start) / 60.0
 
                 print(
                     f"[RERUN mask={os.path.basename(mask_root)} seed={seed}] "
-                    f"best_optim_value={best_optim_value:.6f} best_val_acc={best_val_acc:.6f} "
-                    f"test={test_results} time={minutes:.1f}m",
+                    f"best_log_optim_value={best_log_optim_value:.6f} best_val_acc={best_val_acc:.6f} "
+                    f"test_optim={test_results_optim} test_valacc={test_results_valacc} "
+                    f"time={minutes:.1f}m",
                     flush=True,
                 )
 
@@ -974,8 +1042,10 @@ def main():
                     best_attention_epoch,
                     best_kl_lambda_start,
                     best_kl_increment,
+                    best_log_optim_value,
                     best_val_acc,
-                    json.dumps(test_results),
+                    json.dumps(test_results_optim),
+                    json.dumps(test_results_valacc),
                     minutes,
                 ]
 
