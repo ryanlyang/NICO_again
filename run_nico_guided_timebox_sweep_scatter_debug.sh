@@ -41,8 +41,11 @@ OUTPUT_DIR=${OUTPUT_DIR:-/home/ryreu/guided_cnn/NICO_runs/output/guided_timebox_
 TIME_BUDGET_HOURS=${TIME_BUDGET_HOURS:-22}
 MAX_TRIALS=${MAX_TRIALS:-10000}
 TARGET_DOMAINS=${TARGET_DOMAINS:-"autumn rock"}
-STUDY_NAME=${STUDY_NAME:-nico_guided_timebox_scatter_${SLURM_JOB_ID:-manual}}
-OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/timebox_optuna_${SLURM_JOB_ID:-manual}.db}
+TARGET_TAG=${TARGET_TAG:-$(echo "$TARGET_DOMAINS" | tr ' ' '-')}
+STUDY_NAME=${STUDY_NAME:-nico_guided_timebox_scatter_${TARGET_TAG}}
+OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/timebox_optuna_${TARGET_TAG}.db}
+LOAD_IF_EXISTS=${LOAD_IF_EXISTS:-1}
+FRESH_START=${FRESH_START:-0}
 
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Missing REPO_ROOT: $REPO_ROOT" >&2
@@ -70,6 +73,17 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+EXTRA_ARGS=()
+if [[ "$OPTUNA_STORAGE" == sqlite:///* ]]; then
+  DB_PATH="${OPTUNA_STORAGE#sqlite:///}"
+  if [[ "$FRESH_START" -eq 1 ]]; then
+    rm -f "$DB_PATH"
+  fi
+fi
+if [[ "$LOAD_IF_EXISTS" -eq 1 ]]; then
+  EXTRA_ARGS+=(--load_if_exists)
+fi
+
 echo "[$(date)] Host: $(hostname)"
 echo "Repo: $REPO_ROOT"
 echo "txtlist: $TXTLIST_DIR"
@@ -81,6 +95,8 @@ echo "Time budget (hours): $TIME_BUDGET_HOURS"
 echo "Max Optuna trials: $MAX_TRIALS"
 echo "Study name: $STUDY_NAME"
 echo "Storage: $OPTUNA_STORAGE"
+echo "Load if exists: $LOAD_IF_EXISTS"
+echo "Fresh start: $FRESH_START"
 which python
 
 srun --unbuffered python -u run_nico_guided_timebox_sweep_scatter.py \
@@ -95,4 +111,5 @@ srun --unbuffered python -u run_nico_guided_timebox_sweep_scatter.py \
   --study_name "$STUDY_NAME" \
   --storage "$OPTUNA_STORAGE" \
   --beta 10 \
-  --ig_steps 16
+  --ig_steps 16 \
+  "${EXTRA_ARGS[@]}"
