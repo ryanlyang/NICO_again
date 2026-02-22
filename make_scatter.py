@@ -456,6 +456,67 @@ Running held-out targets=['autumn', 'rock'], sources=['dim', 'grass', 'outdoor',
 [TRIAL 9][Epoch 21] val_acc=0.872640 ig_fwd_kl=2.005792 log_optim_num=-20.194155 optim_num=1.697422e-09 test={'autumn': 82.51786695986806, 'rock': 81.29236330772707, 'overall': 81.8452380952381}
 [TRIAL 9] budget reached after epoch 21 (elapsed=22.06h).
 
+et=22.00h, beta=10.0, ig_steps=16, device=cuda:0, study=nico_guided_timebox_scatter_21060967, storage=sqlite:////home/ryreu/guided_cnn/NICO_runs/output/guided_timebox_autumn_rock/timebox_optuna_21060967.db
+
+[TRIAL 10] start params={'base_lr': 0.0009937337053049697, 'classifier_lr': 0.002066500687051294, 'lr2_mult': 0.9841723347061633, 'attention_epoch': 9, 'kl_lambda_start': 41.98216156182962, 'kl_increment': 0.0} (elapsed=0.00h)
+[TRIAL 10][Epoch 0] val_acc=0.821128 ig_fwd_kl=2.002929 log_optim_num=-20.226370 optim_num=1.643612e-09 test={'autumn': 78.22979659153381, 'rock': 77.45142340713963, 'overall': 77.80257936507937}
+[TRIAL 10][Epoch 1] val_acc=0.834433 ig_fwd_kl=2.003897 log_optim_num=-20.219970 optim_num=1.654165e-09 test={'autumn': 79.65915338097857, 'rock': 78.62629914143696, 'overall': 79.0922619047619}
+[TRIAL 10][Epoch 2] val_acc=0.852627 ig_fwd_kl=2.004090 log_optim_num=-20.200338 optim_num=1.686959e-09 test={'autumn': 79.10940076965366, 'rock': 77.67736104835066, 'overall': 78.3234126984127}
+[TRIAL 10][Epoch 3] val_acc=0.849557 ig_fwd_kl=2.004693 log_optim_num=-20.209969 optim_num=1.670791e-09 test={'autumn': 79.60417811984607, 'rock': 78.30998644374152, 'overall': 78.8938492063492}
+[TRIAL 10][Epoch 4] val_acc=0.850580 ig_fwd_kl=2.005631 log_optim_num=-20.218145 optim_num=1.657185e-09 test={'autumn': 79.27432655305113, 'rock': 79.30411206507004, 'overall': 79.29067460317461}
+[TRIAL 10][Epoch 5] val_acc=0.854787 ig_fwd_kl=2.005957 log_optim_num=-20.216476 optim_num=1.659954e-09 test={'autumn': 79.98900494777351, 'rock': 77.94848621780389, 'overall': 78.86904761904762}
+[TRIAL 10][Epoch 6] val_acc=0.860700 ig_fwd_kl=2.005156 log_optim_num=-20.201568 optim_num=1.684886e-09 test={'autumn': 79.71412864211105, 'rock': 79.12336195210122, 'overall': 79.38988095238095}
+[TRIAL 10][Epoch 7] val_acc=0.858881 ig_fwd_kl=2.005053 log_optim_num=-20.202659 optim_num=1.683049e-09 test={'autumn': 80.75865860362836, 'rock': 78.26479891549933, 'overall': 79.38988095238095}
+[TRIAL 10][Epoch 8] val_acc=0.868547 ig_fwd_kl=2.006344 log_optim_num=-20.204376 optim_num=1.680162e-09 test={'autumn': 80.04398020890599, 'rock': 79.98192498870311, 'overall': 80.00992063492063}
+[TRIAL 10][Epoch 9] val_acc=0.494542 ig_fwd_kl=2.000329 log_optim_num=-20.707412 optim_num=1.015980e-09 test={'autumn': 41.011544804837825, 'rock': 43.831902394939, 'overall': 42.55952380952381}
+[TRIAL 10][Epoch 10] val_acc=0.515351 ig_fwd_kl=2.000847 log_optim_num=-20.671380 optim_num=1.053256e-09 test={'autumn': 45.46454095656954, 'rock': 44.10302756439223, 'overall': 44.717261904761905}
+[TRIAL 10][Epoch 11] val_acc=0.547078 ig_fwd_kl=2.001272 log_optim_num=-20.615886 optim_num=1.113357e-09 test={'autumn': 46.728971962616825, 'rock': 47.3113420695888, 'overall': 47.048611111111114}
+[TRIAL 10][Epoch 12] val_acc=0.578121 ig_fwd_kl=2.001194 log_optim_num=-20.559910 optim_num=1.177455e-09 test={'autumn': 50.357339197361185, 'rock': 48.802530501581565, 'overall': 49.50396825396825}
+[TRIAL 10][Epoch 13] val_acc=0.631340 ig_fwd_kl=2.000746 log_optim_num=-20.467368 optim_num=1.291620e-09 test={'autumn': 59.26333150082463, 'rock': 57.0266606416629, 'overall': 58.035714285714285}
+[TRIAL 10][Epoch 14] val_acc=0.643393 ig_fwd_kl=2.001700 log_optim_num=-20.457995 optim_num=1.303783e-09 test={'autumn': 57.88894997251237, 'rock': 58.29191143244464, 'overall': 58.11011904761905}
+[TRIAL 10][Epoch 15] val_acc=0.655561 ig_fwd_kl=2.001466 log_optim_num=-20.436927 optim_num=1.331544e-09 test={'autumn': 58.218801539307314, 'rock': 57.56891098056936, 'overall': 57.86210317460318}
+[TRIAL 10][Epoch 16] val_acc=0.618262 ig_fwd_kl=2.000680 log_optim_num=-20.487637 optim_num=1.265704e-09 test={'autumn': 55.525013743815286, 'rock': 56.439222774514235, 'overall': 56.026785714285715}
+[TRIAL 10][Epoch 17] val_acc=0.665681 ig_fwd_kl=2.001701 log_optim_num=-20.423950 optim_num=1.348936e-09 test={'autumn': 59.92303463441451, 'rock': 56.71034794396746, 'overall': 58.15972222222222}
+[TRIAL 10][Epoch 18] val_acc=0.676257 ig_fwd_kl=2.001961 log_optim_num=-20.410788 optim_num=1.366807e-09 test={'autumn': 60.5827377680044, 'rock': 62.72028920018075, 'overall': 61.75595238095238}
+[TRIAL 10][Epoch 19] val_acc=0.696839 ig_fwd_kl=2.001267 log_optim_num=-20.373875 optim_num=1.418203e-09 test={'autumn': 60.91258933479934, 'rock': 61.45503840939901, 'overall': 61.21031746031746}
+[TRIAL 10][Epoch 20] val_acc=0.701387 ig_fwd_kl=2.001378 log_optim_num=-20.368470 optim_num=1.425889e-09 test={'autumn': 61.902144035184165, 'rock': 61.22910076818798, 'overall': 61.532738095238095}
+[TRIAL 10][Epoch 21] val_acc=0.705367 ig_fwd_kl=2.001355 log_optim_num=-20.362591 optim_num=1.434297e-09 test={'autumn': 63.71632765255635, 'rock': 63.714414821509266, 'overall': 63.71527777777778}
+[TRIAL 10][Epoch 22] val_acc=0.709916 ig_fwd_kl=2.001664 log_optim_num=-20.359251 optim_num=1.439095e-09 test={'autumn': 63.33150082462892, 'rock': 64.8892905558066, 'overall': 64.18650793650794}
+[TRIAL 10][Epoch 23] val_acc=0.725608 ig_fwd_kl=2.001264 log_optim_num=-20.333380 optim_num=1.476812e-09 test={'autumn': 67.4546454095657, 'rock': 66.51604157252598, 'overall': 66.93948412698413}
+[TRIAL 10][Epoch 24] val_acc=0.740050 ig_fwd_kl=2.001226 log_optim_num=-20.313300 optim_num=1.506766e-09 test={'autumn': 66.13523914238593, 'rock': 66.38047898779936, 'overall': 66.26984126984127}
+[TRIAL 10][Epoch 25] val_acc=0.749829 ig_fwd_kl=2.001282 log_optim_num=-20.300726 optim_num=1.525831e-09 test={'autumn': 67.94942275975811, 'rock': 66.6064166290104, 'overall': 67.21230158730158}
+[TRIAL 10][Epoch 26] val_acc=0.763134 ig_fwd_kl=2.001134 log_optim_num=-20.281657 optim_num=1.555207e-09 test={'autumn': 68.33424958768555, 'rock': 67.32941708088568, 'overall': 67.7827380952381}
+[TRIAL 10][Epoch 27] val_acc=0.763134 ig_fwd_kl=2.000867 log_optim_num=-20.278993 optim_num=1.559356e-09 test={'autumn': 68.82902693787796, 'rock': 68.95616809760506, 'overall': 68.89880952380952}
+[TRIAL 10][Epoch 28] val_acc=0.773823 ig_fwd_kl=2.000959 log_optim_num=-20.266001 optim_num=1.579747e-09 test={'autumn': 70.36833424958769, 'rock': 69.76954360596476, 'overall': 70.03968253968254}
+[TRIAL 10][Epoch 29] val_acc=0.779281 ig_fwd_kl=2.001028 log_optim_num=-20.259659 optim_num=1.589798e-09 test={'autumn': 70.69818581638263, 'rock': 70.44735652959783, 'overall': 70.56051587301587}
+
+[TRIAL 11] start params={'base_lr': 0.00016613225048005316, 'classifier_lr': 0.00010193035271015466, 'lr2_mult': 0.2676127973216258, 'attention_epoch': 9, 'kl_lambda_start': 8.23861694050246, 'kl_increment': 0.0} (elapsed=2.26h)
+[TRIAL 11][Epoch 0] val_acc=0.702752 ig_fwd_kl=2.003555 log_optim_num=-20.388304 optim_num=1.397888e-09 test={'autumn': 69.1588785046729, 'rock': 69.81473113420697, 'overall': 69.5188492063492}
+[TRIAL 11][Epoch 1] val_acc=0.778030 ig_fwd_kl=2.001999 log_optim_num=-20.270982 optim_num=1.571898e-09 test={'autumn': 76.41561297416163, 'rock': 76.2765476728423, 'overall': 76.33928571428571}
+[TRIAL 11][Epoch 2] val_acc=0.806459 ig_fwd_kl=2.002122 log_optim_num=-20.236324 optim_num=1.627332e-09 test={'autumn': 78.3397471137988, 'rock': 78.0388612742883, 'overall': 78.17460317460318}
+[TRIAL 11][Epoch 3] val_acc=0.822606 ig_fwd_kl=2.002581 log_optim_num=-20.221086 optim_num=1.652319e-09 test={'autumn': 78.99945024738868, 'rock': 79.12336195210122, 'overall': 79.06746031746032}
+[TRIAL 11][Epoch 4] val_acc=0.834433 ig_fwd_kl=2.002360 log_optim_num=-20.204605 optim_num=1.679777e-09 test={'autumn': 80.04398020890599, 'rock': 79.8011748757343, 'overall': 79.91071428571429}
+[TRIAL 11][Epoch 5] val_acc=0.843530 ig_fwd_kl=2.002677 log_optim_num=-20.196928 optim_num=1.692722e-09 test={'autumn': 80.48378229796592, 'rock': 79.93673746046092, 'overall': 80.18353174603175}
+[TRIAL 11][Epoch 6] val_acc=0.847623 ig_fwd_kl=2.002941 log_optim_num=-20.194726 optim_num=1.696453e-09 test={'autumn': 81.41836173721825, 'rock': 80.56936285585178, 'overall': 80.95238095238095}
+[TRIAL 11][Epoch 7] val_acc=0.852286 ig_fwd_kl=2.003093 log_optim_num=-20.190761 optim_num=1.703193e-09 test={'autumn': 81.36338647608576, 'rock': 80.7501129688206, 'overall': 81.02678571428571}
+[TRIAL 11][Epoch 8] val_acc=0.854105 ig_fwd_kl=2.003248 log_optim_num=-20.190181 optim_num=1.704181e-09 test={'autumn': 81.47333699835075, 'rock': 81.02123813827383, 'overall': 81.22519841269842}
+[TRIAL 11][Epoch 9] val_acc=0.822947 ig_fwd_kl=1.996474 log_optim_num=-20.159605 optim_num=1.757093e-09 test={'autumn': 78.39472237493128, 'rock': 78.53592408495255, 'overall': 78.47222222222223}
+[TRIAL 11][Epoch 10] val_acc=0.819195 ig_fwd_kl=1.996080 log_optim_num=-20.160233 optim_num=1.755990e-09 test={'autumn': 77.73501924134139, 'rock': 78.21961138725712, 'overall': 78.00099206349206}
+[TRIAL 11][Epoch 11] val_acc=0.817944 ig_fwd_kl=1.996441 log_optim_num=-20.165374 optim_num=1.746986e-09 test={'autumn': 77.89994502473887, 'rock': 78.44554902846814, 'overall': 78.19940476190476}
+[TRIAL 11][Epoch 12] val_acc=0.811121 ig_fwd_kl=1.996129 log_optim_num=-20.170628 optim_num=1.737831e-09 test={'autumn': 77.73501924134139, 'rock': 77.54179846362403, 'overall': 77.62896825396825}
+[TRIAL 11][Epoch 13] val_acc=0.816352 ig_fwd_kl=1.997167 log_optim_num=-20.174577 optim_num=1.730982e-09 test={'autumn': 76.96536558548654, 'rock': 77.81292363307728, 'overall': 77.43055555555556}
+[TRIAL 11][Epoch 14] val_acc=0.812827 ig_fwd_kl=1.996843 log_optim_num=-20.175664 optim_num=1.729101e-09 test={'autumn': 78.00989554700385, 'rock': 77.54179846362403, 'overall': 77.75297619047619}
+[TRIAL 11][Epoch 15] val_acc=0.815897 ig_fwd_kl=1.996880 log_optim_num=-20.172271 optim_num=1.734979e-09 test={'autumn': 77.89994502473887, 'rock': 78.40036150022594, 'overall': 78.17460317460318}
+[TRIAL 11][Epoch 16] val_acc=0.814533 ig_fwd_kl=1.996691 log_optim_num=-20.172051 optim_num=1.735360e-09 test={'autumn': 78.17482133040131, 'rock': 78.44554902846814, 'overall': 78.3234126984127}
+[TRIAL 11][Epoch 17] val_acc=0.815101 ig_fwd_kl=1.997001 log_optim_num=-20.174456 optim_num=1.731191e-09 test={'autumn': 78.11984606926883, 'rock': 77.67736104835066, 'overall': 77.87698412698413}
+[TRIAL 11][Epoch 18] val_acc=0.815783 ig_fwd_kl=1.997091 log_optim_num=-20.174520 optim_num=1.731080e-09 test={'autumn': 78.77954920285872, 'rock': 77.90329868956168, 'overall': 78.29861111111111}
+[TRIAL 11][Epoch 19] val_acc=0.817375 ig_fwd_kl=1.997063 log_optim_num=-20.172283 optim_num=1.734957e-09 test={'autumn': 78.2847718526663, 'rock': 77.36104835065522, 'overall': 77.77777777777777}
+[TRIAL 11][Epoch 20] val_acc=0.820218 ig_fwd_kl=1.997152 log_optim_num=-20.169703 optim_num=1.739439e-09 test={'autumn': 78.39472237493128, 'rock': 78.17442385901491, 'overall': 78.27380952380952}
+[TRIAL 11][Epoch 21] val_acc=0.822038 ig_fwd_kl=1.997405 log_optim_num=-20.170014 optim_num=1.738898e-09 test={'autumn': 78.55964815832876, 'rock': 77.67736104835066, 'overall': 78.07539682539682}
+[TRIAL 11][Epoch 22] val_acc=0.819991 ig_fwd_kl=1.997514 log_optim_num=-20.173605 optim_num=1.732665e-09 test={'autumn': 78.55964815832876, 'rock': 77.94848621780389, 'overall': 78.22420634920636}
+[TRIAL 11][Epoch 23] val_acc=0.819650 ig_fwd_kl=1.997529 log_optim_num=-20.174167 optim_num=1.731691e-09 test={'autumn': 78.3397471137988, 'rock': 77.67736104835066, 'overall': 77.97619047619048}
+[TRIAL 11][Epoch 24] val_acc=0.823175 ig_fwd_kl=1.997677 log_optim_num=-20.171357 optim_num=1.736564e-09 test={'autumn': 78.3397471137988, 'rock': 77.99367374604608, 'overall': 78.14980158730158}
+[TRIAL 11][Epoch 25] val_acc=0.822834 ig_fwd_kl=1.997092 log_optim_num=-20.165918 optim_num=1.746036e-09 test={'autumn': 78.55964815832876, 'rock': 78.26479891549933, 'overall': 78.39781746031746}
 
 """
 import re

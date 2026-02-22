@@ -135,11 +135,20 @@ def main():
     # Also report best rows by optim_num at a fixed beta (requested: beta=10).
     df_beta = df_post.copy()
     df_beta["optim_num_beta"] = df_beta["val_acc"] * np.exp(-BETA_REPORT * df_beta["ig_fwd_kl"])
+    df_beta["log_optim_num_beta"] = np.log(np.maximum(df_beta["optim_num_beta"], 1e-300))
     top_beta = df_beta.sort_values("optim_num_beta", ascending=False).head(15)
     print(f"\nTop 15 rows by optim_num at beta={BETA_REPORT} (post-attn only):")
     print(
         top_beta[
-            ["trial", "epoch", "attention_epoch", "val_acc", "ig_fwd_kl", "optim_num_beta", "test_overall"]
+            [
+                "trial",
+                "epoch",
+                "attention_epoch",
+                "val_acc",
+                "ig_fwd_kl",
+                "log_optim_num_beta",
+                "test_overall",
+            ]
         ].to_string(index=False)
     )
 
