@@ -4,8 +4,8 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=0-23:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=12
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
 #SBATCH --output=logsNICO/nico_guided_epoch_debug_dim_grass_%j.out
 #SBATCH --error=logsNICO/nico_guided_epoch_debug_dim_grass_%j.err
 #SBATCH --signal=TERM@120

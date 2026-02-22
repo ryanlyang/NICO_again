@@ -4,8 +4,8 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=7-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
 #SBATCH --output=logsNICO/nico_vanilla_sgd_optuna_%j.out
 #SBATCH --error=logsNICO/nico_vanilla_sgd_optuna_%j.err
 #SBATCH --signal=TERM@120
