@@ -184,7 +184,7 @@ def build_afr_splits(
 # -----------------------------------------------------------------------------
 # Model + training
 # -----------------------------------------------------------------------------
-def make_resnet50(num_classes: int) -> nn.Module:
+def make_resnet50(num_classes: int, dropout_p: float = 0.0) -> nn.Module:
     try:
         weights = models.ResNet50_Weights.IMAGENET1K_V1
         model = models.resnet50(weights=weights)
@@ -192,7 +192,10 @@ def make_resnet50(num_classes: int) -> nn.Module:
         model = models.resnet50(pretrained=True)
 
     in_features = model.fc.in_features
-    model.fc = nn.Linear(in_features, num_classes)
+    model.fc = nn.Sequential(
+        nn.Dropout(p=float(dropout_p)),
+        nn.Linear(in_features, num_classes),
+    )
     return model
 
 
@@ -200,13 +203,30 @@ def train_stage1_erm(
     model: nn.Module,
     train_loader: DataLoader,
     num_epochs: int,
-    lr: float,
+    base_lr: float,
+    classifier_lr: float,
     momentum: float,
     weight_decay: float,
 ) -> nn.Module:
     model.train()
 
-    opt = optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+    base_params = []
+    classifier_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if name.startswith("fc."):
+            classifier_params.append(param)
+        else:
+            base_params.append(param)
+
+    param_groups = []
+    if base_params:
+        param_groups.append({"params": base_params, "lr": base_lr})
+    if classifier_params:
+        param_groups.append({"params": classifier_params, "lr": classifier_lr})
+
+    opt = optim.SGD(param_groups, momentum=momentum, weight_decay=weight_decay)
     sch = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=num_epochs)
 
     for epoch in range(num_epochs):
@@ -527,24 +547,37 @@ def run_single_seed_pipeline(
         for ds in test_eval_ds
     ]
 
-    model = make_resnet50(args.num_classes).to(DEVICE)
+    stage1_base_lr = args.stage1_base_lr if args.stage1_base_lr is not None else args.stage1_lr
+    stage1_classifier_lr = (
+        args.stage1_classifier_lr if args.stage1_classifier_lr is not None else stage1_base_lr
+    )
+
+    model = make_resnet50(args.num_classes, dropout_p=args.stage1_dropout).to(DEVICE)
     print(
         f"Stage1 ERM: seed={seed}, train={len(erm_train_ds)}, rw={len(rw_eval_ds)}, val={len(val_eval_ds)}, "
-        f"epochs={args.stage1_epochs}, lr={args.stage1_lr}, wd={args.stage1_weight_decay}",
+        f"epochs={args.stage1_epochs}, base_lr={stage1_base_lr}, classifier_lr={stage1_classifier_lr}, "
+        f"dropout={args.stage1_dropout}, wd={args.stage1_weight_decay}",
         flush=True,
     )
     model = train_stage1_erm(
         model,
         erm_loader,
         num_epochs=args.stage1_epochs,
-        lr=args.stage1_lr,
+        base_lr=stage1_base_lr,
+        classifier_lr=stage1_classifier_lr,
         momentum=args.stage1_momentum,
         weight_decay=args.stage1_weight_decay,
     )
 
     stage1_classifier = copy.deepcopy(model.fc).to(DEVICE).eval()
-    init_weight = stage1_classifier.weight.detach().clone()
-    init_bias = stage1_classifier.bias.detach().clone()
+    if isinstance(stage1_classifier, nn.Sequential):
+        stage1_linear = stage1_classifier[-1]
+    else:
+        stage1_linear = stage1_classifier
+    if not isinstance(stage1_linear, nn.Linear):
+        raise RuntimeError(f"Expected final classifier to be nn.Linear, got {type(stage1_linear)}")
+    init_weight = stage1_linear.weight.detach().clone()
+    init_bias = stage1_linear.bias.detach().clone()
 
     rw_emb, rw_y, _ = extract_embeddings(model, rw_loader)
     val_emb, val_y, _ = extract_embeddings(model, val_loader)
@@ -603,7 +636,12 @@ def main():
     # Stage 1 (ERM)
     parser.add_argument("--stage1_epochs", type=int, default=30)
     parser.add_argument("--stage1_batch_size", type=int, default=32)
+    parser.add_argument("--stage1_base_lr", type=float, default=None,
+                        help="Stage-1 backbone LR (defaults to --stage1_lr if unset).")
+    parser.add_argument("--stage1_classifier_lr", type=float, default=None,
+                        help="Stage-1 classifier LR (defaults to stage1 backbone LR if unset).")
     parser.add_argument("--stage1_lr", type=float, default=3e-3)
+    parser.add_argument("--stage1_dropout", type=float, default=0.0)
     parser.add_argument("--stage1_momentum", type=float, default=0.9)
     parser.add_argument("--stage1_weight_decay", type=float, default=1e-4)
 
@@ -647,10 +685,16 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     reg_coeff_choices = parse_float_csv(args.reg_coeff_choices)
+    stage1_base_lr = args.stage1_base_lr if args.stage1_base_lr is not None else args.stage1_lr
+    stage1_classifier_lr = (
+        args.stage1_classifier_lr if args.stage1_classifier_lr is not None else stage1_base_lr
+    )
 
     print(
         f"Running AFR sweep | targets={targets}, sources={sources}, device={DEVICE}, "
-        f"stage1=(epochs={args.stage1_epochs}, lr={args.stage1_lr}, wd={args.stage1_weight_decay}), "
+        f"stage1=(epochs={args.stage1_epochs}, base_lr={stage1_base_lr}, "
+        f"classifier_lr={stage1_classifier_lr}, dropout={args.stage1_dropout}, "
+        f"wd={args.stage1_weight_decay}), "
         f"stage2=(epochs={args.stage2_epochs}, lr={args.stage2_lr}), "
         f"search: gamma=[{args.gamma_low}, {args.gamma_high}] reg_coeff={reg_coeff_choices}",
         flush=True,
@@ -751,7 +795,9 @@ def main():
         "stage1": {
             "epochs": args.stage1_epochs,
             "batch_size": args.stage1_batch_size,
-            "lr": args.stage1_lr,
+            "base_lr": stage1_base_lr,
+            "classifier_lr": stage1_classifier_lr,
+            "dropout": args.stage1_dropout,
             "momentum": args.stage1_momentum,
             "weight_decay": args.stage1_weight_decay,
             "erm_train_prop": args.erm_train_prop,

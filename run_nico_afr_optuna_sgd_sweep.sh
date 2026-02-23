@@ -5,7 +5,7 @@
 #SBATCH --time=7-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --output=logsNICO/nico_afr_sgd_optuna_%j.out
 #SBATCH --error=logsNICO/nico_afr_sgd_optuna_%j.err
 #SBATCH --signal=TERM@120
@@ -64,6 +64,9 @@ ERM_TRAIN_PROP=${ERM_TRAIN_PROP:-0.8}
 STAGE1_EPOCHS=${STAGE1_EPOCHS:-30}
 STAGE1_BATCH_SIZE=${STAGE1_BATCH_SIZE:-32}
 STAGE1_LR=${STAGE1_LR:-3e-3}
+STAGE1_BASE_LR=${STAGE1_BASE_LR-}
+STAGE1_CLASSIFIER_LR=${STAGE1_CLASSIFIER_LR-}
+STAGE1_DROPOUT=${STAGE1_DROPOUT:-0.0}
 STAGE1_MOMENTUM=${STAGE1_MOMENTUM:-0.9}
 STAGE1_WEIGHT_DECAY=${STAGE1_WEIGHT_DECAY:-1e-4}
 
@@ -117,6 +120,14 @@ if [[ -n "${TIMEOUT_SECONDS}" ]]; then
   EXTRA_ARGS+=(--timeout "$TIMEOUT_SECONDS")
 fi
 
+STAGE1_LR_ARGS=()
+if [[ -n "${STAGE1_BASE_LR}" ]]; then
+  STAGE1_LR_ARGS+=(--stage1_base_lr "$STAGE1_BASE_LR")
+fi
+if [[ -n "${STAGE1_CLASSIFIER_LR}" ]]; then
+  STAGE1_LR_ARGS+=(--stage1_classifier_lr "$STAGE1_CLASSIFIER_LR")
+fi
+
 echo "[$(date)] Host: $(hostname)"
 echo "Repo: $REPO_ROOT"
 echo "txtlist: $TXTLIST_DIR"
@@ -124,7 +135,7 @@ echo "Images: $IMAGE_ROOT"
 echo "Output: $OUTPUT_DIR"
 echo "Targets: $TARGET_DOMAINS"
 echo "Trials: $N_TRIALS"
-echo "AFR stage1: epochs=$STAGE1_EPOCHS batch=$STAGE1_BATCH_SIZE lr=$STAGE1_LR mom=$STAGE1_MOMENTUM wd=$STAGE1_WEIGHT_DECAY"
+echo "AFR stage1: epochs=$STAGE1_EPOCHS batch=$STAGE1_BATCH_SIZE lr=$STAGE1_LR base_lr=${STAGE1_BASE_LR:-AUTO} classifier_lr=${STAGE1_CLASSIFIER_LR:-AUTO} dropout=$STAGE1_DROPOUT mom=$STAGE1_MOMENTUM wd=$STAGE1_WEIGHT_DECAY"
 echo "AFR stage2: epochs=$STAGE2_EPOCHS lr=$STAGE2_LR eval_batch=$EVAL_BATCH_SIZE"
 echo "AFR split: erm_train_prop=$ERM_TRAIN_PROP"
 echo "AFR sweep: gamma=[$GAMMA_LOW,$GAMMA_HIGH], reg_coeff={${REG_COEFF_CHOICES}}"
@@ -144,6 +155,7 @@ srun --unbuffered python -u run_nico_afr_optuna_sgd.py \
   --stage1_epochs "$STAGE1_EPOCHS" \
   --stage1_batch_size "$STAGE1_BATCH_SIZE" \
   --stage1_lr "$STAGE1_LR" \
+  --stage1_dropout "$STAGE1_DROPOUT" \
   --stage1_momentum "$STAGE1_MOMENTUM" \
   --stage1_weight_decay "$STAGE1_WEIGHT_DECAY" \
   --stage2_epochs "$STAGE2_EPOCHS" \
@@ -152,4 +164,5 @@ srun --unbuffered python -u run_nico_afr_optuna_sgd.py \
   --gamma_low "$GAMMA_LOW" \
   --gamma_high "$GAMMA_HIGH" \
   --reg_coeff_choices "$REG_COEFF_CHOICES" \
+  "${STAGE1_LR_ARGS[@]}" \
   "${EXTRA_ARGS[@]}"
