@@ -576,7 +576,8 @@ def main():
     parser.add_argument("--target", nargs="+", required=True)
     parser.add_argument("--num_classes", type=int, default=60)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--num_workers", type=int, default=8)
+    # Keep at 0 by default to avoid PIL multiprocessing plugin import issues.
+    parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--beta", type=float, default=BETA_DEFAULT, help="log_optim_num beta coefficient")
     parser.add_argument("--ig_steps", type=int, default=IG_STEPS_DEFAULT,
@@ -777,7 +778,8 @@ def main():
 
         return best_log_optim_value
 
-    study.optimize(objective, n_trials=args.n_trials, timeout=args.timeout)
+    # Continue sweep even if an occasional trial crashes (e.g. transient I/O/PIL worker errors).
+    study.optimize(objective, n_trials=args.n_trials, timeout=args.timeout, catch=(Exception,))
 
     best_trial = study.best_trial
     best = {

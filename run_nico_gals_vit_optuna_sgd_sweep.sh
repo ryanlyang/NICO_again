@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=15-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
 #SBATCH --output=logsNICO/nico_gals_vit_sgd_optuna_%j.out
 #SBATCH --error=logsNICO/nico_gals_vit_sgd_optuna_%j.err
 #SBATCH --signal=TERM@120
@@ -139,4 +139,3 @@ srun --unbuffered python -u run_nico_gals_vit_optuna_sgd.py \
   --rerun_num_seeds "$RERUN_NUM_SEEDS" \
   --rerun_seed_start "$RERUN_SEED_START" \
   "${EXTRA_ARGS[@]}"
-

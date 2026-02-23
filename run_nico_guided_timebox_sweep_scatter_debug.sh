@@ -7,7 +7,7 @@
 #SBATCH --time=1-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=32G
 #SBATCH --output=logsNICO/nico_guided_timebox_scatter_%j.out
 #SBATCH --error=logsNICO/nico_guided_timebox_scatter_%j.err
 #SBATCH --signal=TERM@120
