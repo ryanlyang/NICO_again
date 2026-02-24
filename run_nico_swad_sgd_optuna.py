@@ -296,7 +296,8 @@ def main():
     p.add_argument("--weight_decay", type=float, default=1e-5)
     p.add_argument("--tolerance_ratio_low", type=float, default=0.1)
     p.add_argument("--tolerance_ratio_high", type=float, default=0.5)
-    p.add_argument("--n_converge", type=int, default=3)
+    p.add_argument("--n_converge_min", type=int, default=3)
+    p.add_argument("--n_converge_max", type=int, default=3)
     p.add_argument("--n_tolerance_min", type=int, default=3)
     p.add_argument("--n_tolerance_max", type=int, default=10)
 
@@ -381,12 +382,13 @@ def main():
         weight_decay = args.weight_decay
 
         tolerance_ratio = trial.suggest_float("tolerance_ratio", args.tolerance_ratio_low, args.tolerance_ratio_high)
+        n_converge = trial.suggest_int("n_converge", args.n_converge_min, args.n_converge_max)
         n_tolerance = trial.suggest_int("n_tolerance", args.n_tolerance_min, args.n_tolerance_max)
 
         print(
             f"[TRIAL {trial.number}] start params={{'base_lr': {base_lr}, 'classifier_lr': {classifier_lr}, "
             f"'momentum': {args.momentum}, 'weight_decay': {weight_decay} (fixed), 'batch_size': {args.batch_size}, "
-            f"'resnet_dropout': {args.resnet_dropout}, 'n_converge': {args.n_converge}, "
+            f"'resnet_dropout': {args.resnet_dropout}, 'n_converge': {n_converge}, "
             f"'n_tolerance': {n_tolerance}, 'tolerance_ratio': {tolerance_ratio}, "
             f"'num_epochs': {args.num_epochs}}}",
             flush=True,
@@ -419,7 +421,7 @@ def main():
             num_epochs=args.num_epochs,
         )
         swad_args = dict(
-            n_converge=args.n_converge,
+            n_converge=n_converge,
             n_tolerance=n_tolerance,
             tolerance_ratio=tolerance_ratio,
         )
@@ -461,6 +463,7 @@ def main():
         best_classifier_lr = float(study.best_params["classifier_lr"])
         best_dropout = float(args.resnet_dropout)
         best_weight_decay = float(args.weight_decay)
+        best_n_converge = int(study.best_params.get("n_converge", args.n_converge_min))
         best_n_tolerance = int(study.best_params.get("n_tolerance", args.n_tolerance_min))
         best_tolerance_ratio = float(study.best_params.get("tolerance_ratio", args.tolerance_ratio_low))
 
@@ -480,7 +483,7 @@ def main():
             f"Best params resolved: base_lr={best_base_lr} classifier_lr={best_classifier_lr} "
             f"momentum={args.momentum} weight_decay={best_weight_decay} "
             f"batch_size={args.batch_size} resnet_dropout={best_dropout} "
-            f"n_converge={args.n_converge} n_tolerance={best_n_tolerance} tolerance_ratio={best_tolerance_ratio}",
+            f"n_converge={best_n_converge} n_tolerance={best_n_tolerance} tolerance_ratio={best_tolerance_ratio}",
             flush=True,
         )
 
@@ -512,7 +515,7 @@ def main():
                 num_epochs=args.num_epochs,
             )
             swad_args = dict(
-                n_converge=args.n_converge,
+                n_converge=best_n_converge,
                 n_tolerance=best_n_tolerance,
                 tolerance_ratio=best_tolerance_ratio,
             )
@@ -536,7 +539,7 @@ def main():
                     best_weight_decay,
                     args.batch_size,
                     best_dropout,
-                    args.n_converge,
+                    best_n_converge,
                     best_n_tolerance,
                     best_tolerance_ratio,
                     args.num_epochs,

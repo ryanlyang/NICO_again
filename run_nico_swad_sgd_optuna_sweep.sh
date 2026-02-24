@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=7-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=64G
 #SBATCH --output=logsNICO/nico_swad_sgd_optuna_%j.out
 #SBATCH --error=logsNICO/nico_swad_sgd_optuna_%j.err
 #SBATCH --signal=TERM@120
@@ -61,6 +61,20 @@ STUDY_NAME=${STUDY_NAME:-nico_swad_sgd_${TARGET_TAG}}
 OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_swad_sgd_v1_${TARGET_TAG}.db}
 FRESH_START=${FRESH_START:-1}
 
+# Optional sweep overrides (set low=high to lock values)
+BASE_LR_LOW=${BASE_LR_LOW:-1e-5}
+BASE_LR_HIGH=${BASE_LR_HIGH:-5e-2}
+CLASSIFIER_LR_LOW=${CLASSIFIER_LR_LOW:-1e-5}
+CLASSIFIER_LR_HIGH=${CLASSIFIER_LR_HIGH:-5e-2}
+RESNET_DROPOUT=${RESNET_DROPOUT:-0.0}
+WEIGHT_DECAY=${WEIGHT_DECAY:-1e-5}
+TOLERANCE_RATIO_LOW=${TOLERANCE_RATIO_LOW:-0.1}
+TOLERANCE_RATIO_HIGH=${TOLERANCE_RATIO_HIGH:-0.5}
+N_TOLERANCE_MIN=${N_TOLERANCE_MIN:-3}
+N_TOLERANCE_MAX=${N_TOLERANCE_MAX:-10}
+N_CONVERGE_MIN=${N_CONVERGE_MIN:-3}
+N_CONVERGE_MAX=${N_CONVERGE_MAX:-3}
+
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Missing REPO_ROOT: $REPO_ROOT" >&2
   exit 1
@@ -105,6 +119,14 @@ echo "Images: $IMAGE_ROOT"
 echo "Output: $OUTPUT_DIR"
 echo "Targets: $TARGET_DOMAINS"
 echo "Trials: $N_TRIALS"
+echo "Sweep ranges:"
+echo "  base_lr: [$BASE_LR_LOW, $BASE_LR_HIGH]"
+echo "  classifier_lr: [$CLASSIFIER_LR_LOW, $CLASSIFIER_LR_HIGH]"
+echo "  resnet_dropout: $RESNET_DROPOUT (fixed)"
+echo "  weight_decay: $WEIGHT_DECAY (fixed)"
+echo "  tolerance_ratio: [$TOLERANCE_RATIO_LOW, $TOLERANCE_RATIO_HIGH]"
+echo "  n_tolerance: [$N_TOLERANCE_MIN, $N_TOLERANCE_MAX]"
+echo "  n_converge: [$N_CONVERGE_MIN, $N_CONVERGE_MAX]"
 if [[ -n "${TIMEOUT_SECONDS}" ]]; then
   echo "Timeout: $TIMEOUT_SECONDS"
 fi
@@ -121,4 +143,16 @@ srun --unbuffered python -u run_nico_swad_sgd_optuna.py \
   --output_dir "$OUTPUT_DIR" \
   --target $TARGET_DOMAINS \
   --n_trials "$N_TRIALS" \
+  --base_lr_low "$BASE_LR_LOW" \
+  --base_lr_high "$BASE_LR_HIGH" \
+  --classifier_lr_low "$CLASSIFIER_LR_LOW" \
+  --classifier_lr_high "$CLASSIFIER_LR_HIGH" \
+  --resnet_dropout "$RESNET_DROPOUT" \
+  --weight_decay "$WEIGHT_DECAY" \
+  --tolerance_ratio_low "$TOLERANCE_RATIO_LOW" \
+  --tolerance_ratio_high "$TOLERANCE_RATIO_HIGH" \
+  --n_tolerance_min "$N_TOLERANCE_MIN" \
+  --n_tolerance_max "$N_TOLERANCE_MAX" \
+  --n_converge_min "$N_CONVERGE_MIN" \
+  --n_converge_max "$N_CONVERGE_MAX" \
   "${EXTRA_ARGS[@]}"
