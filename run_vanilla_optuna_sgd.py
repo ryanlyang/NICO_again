@@ -332,6 +332,8 @@ def main():
     parser.add_argument("--target", nargs="+", required=True, help="Target (held-out) domains")
     parser.add_argument("--num_classes", type=int, default=60, help="Number of classes")
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
+    parser.add_argument("--run_name_prefix", type=str, default="vanilla",
+                        help="Prefix used to build the run output folder name.")
     parser.add_argument("--num_workers", type=int, default=8, help="DataLoader workers")
     parser.add_argument("--seed", type=int, default=SEED, help="Random seed")
 
@@ -352,6 +354,8 @@ def main():
     parser.add_argument("--base_lr_high", type=float, default=5e-2)
     parser.add_argument("--classifier_lr_low", type=float, default=1e-5)
     parser.add_argument("--classifier_lr_high", type=float, default=5e-2)
+    parser.add_argument("--single_lr", action="store_true",
+                        help="Use one shared LR for base and classifier (sampled as 'lr').")
     parser.add_argument("--dropout_choices", type=str, default="0.0,0.1,0.5", help="Comma-separated dropout ps to search.")
     parser.add_argument("--batch_size", type=int, default=BATCH_SIZE_DEFAULT)
     parser.add_argument("--weight_decay", type=float, default=WEIGHT_DECAY_DEFAULT)
@@ -375,7 +379,7 @@ def main():
 
     args.target = targets
 
-    run_name = f"vanilla_target_{'-'.join(args.target)}"
+    run_name = f"{args.run_name_prefix}_target_{'-'.join(args.target)}"
     output_dir = os.path.join(args.output_dir, run_name)
     os.makedirs(output_dir, exist_ok=True)
 
@@ -444,19 +448,33 @@ def main():
             writer.writerow(row)
 
     def objective(trial):
-        base_lr = suggest_loguniform(trial, "base_lr", args.base_lr_low, args.base_lr_high)
-        classifier_lr = suggest_loguniform(trial, "classifier_lr", args.classifier_lr_low, args.classifier_lr_high)
+        if args.single_lr:
+            lr = suggest_loguniform(trial, "lr", args.base_lr_low, args.base_lr_high)
+            base_lr = lr
+            classifier_lr = lr
+        else:
+            base_lr = suggest_loguniform(trial, "base_lr", args.base_lr_low, args.base_lr_high)
+            classifier_lr = suggest_loguniform(trial, "classifier_lr", args.classifier_lr_low, args.classifier_lr_high)
         resnet_dropout = trial.suggest_categorical("resnet_dropout", dropout_choices)
         batch_size = args.batch_size
         weight_decay = args.weight_decay
 
-        print(
-            f"[TRIAL {trial.number}] start params={{'base_lr': {base_lr}, 'classifier_lr': {classifier_lr}, "
-            f"'momentum': {args.momentum}, 'weight_decay': {weight_decay} (fixed), "
-            f"'batch_size': {batch_size} (fixed), "
-            f"'resnet_dropout': {resnet_dropout}, 'num_epochs': {args.num_epochs}}}",
-            flush=True,
-        )
+        if args.single_lr:
+            print(
+                f"[TRIAL {trial.number}] start params={{'lr': {base_lr}, "
+                f"'momentum': {args.momentum}, 'weight_decay': {weight_decay} (fixed), "
+                f"'batch_size': {batch_size} (fixed), "
+                f"'resnet_dropout': {resnet_dropout}, 'num_epochs': {args.num_epochs}}}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[TRIAL {trial.number}] start params={{'base_lr': {base_lr}, 'classifier_lr': {classifier_lr}, "
+                f"'momentum': {args.momentum}, 'weight_decay': {weight_decay} (fixed), "
+                f"'batch_size': {batch_size} (fixed), "
+                f"'resnet_dropout': {resnet_dropout}, 'num_epochs': {args.num_epochs}}}",
+                flush=True,
+            )
 
         trial_seed = args.seed + trial.number
         seed_everything(trial_seed)
@@ -525,8 +543,13 @@ def main():
 
     if int(args.rerun_best) == 1:
         seeds = parse_seeds(args.rerun_seed_start, args.rerun_num_seeds, args.rerun_seeds)
-        best_base_lr = float(study.best_params["base_lr"])
-        best_classifier_lr = float(study.best_params["classifier_lr"])
+        if args.single_lr:
+            best_lr = float(study.best_params["lr"])
+            best_base_lr = best_lr
+            best_classifier_lr = best_lr
+        else:
+            best_base_lr = float(study.best_params["base_lr"])
+            best_classifier_lr = float(study.best_params["classifier_lr"])
         best_dropout = float(study.best_params.get("resnet_dropout", dropout_choices[0]))
         best_batch_size = int(args.batch_size)
         best_weight_decay = float(args.weight_decay)
