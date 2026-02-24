@@ -273,14 +273,17 @@ def build_train_val_datasets(args, sources, data_transforms, generator, mask_roo
 # MODEL: ResNet-50 with CAM
 # =============================================================================
 
-def make_cam_model(num_classes):
+def make_cam_model(num_classes, dropout_p=0.0):
     try:
         weights = models.ResNet50_Weights.IMAGENET1K_V1
         base = models.resnet50(weights=weights)
     except AttributeError:
         base = models.resnet50(pretrained=True)
     num_features = base.fc.in_features
-    base.fc = nn.Linear(num_features, num_classes)
+    base.fc = nn.Sequential(
+        nn.Dropout(p=float(dropout_p)),
+        nn.Linear(num_features, num_classes)
+    )
 
     class CAMWrapResNet(nn.Module):
         def __init__(self, base_model):
@@ -297,6 +300,17 @@ def make_cam_model(num_classes):
             return out, self.features
 
     return CAMWrapResNet(base)
+
+
+def get_classifier_layer(model):
+    fc = model.base.fc
+    if isinstance(fc, nn.Linear):
+        return fc
+    if isinstance(fc, nn.Sequential):
+        for layer in reversed(fc):
+            if isinstance(layer, nn.Linear):
+                return layer
+    raise RuntimeError("Unable to locate final Linear classifier in model.base.fc")
 
 
 # =============================================================================
@@ -442,7 +456,7 @@ def train_one_trial(model, dataloaders, dataset_sizes, args, trial=None):
                     outputs, feats = model(inputs)
                     _, preds = torch.max(outputs, 1)
 
-                    weights = model.base.fc.weight[labels]
+                    weights = get_classifier_layer(model).weight[labels]
                     B, C, H, W = feats.shape
                     _ = feats.view(B, C, -1).mean(dim=2)
 
@@ -621,6 +635,8 @@ def main():
     parser.add_argument('--output_dir', type=str, required=True, help='Output directory')
     parser.add_argument('--num_workers', type=int, default=8, help='Number of workers')
     parser.add_argument('--seed', type=int, default=SEED, help='Random seed')
+    parser.add_argument('--resnet_dropout', type=float, default=0.0,
+                        help='Fixed dropout inserted before the ResNet classifier.')
     parser.add_argument('--beta', type=float, default=BETA_DEFAULT, help='optim_value beta coefficient')
 
     # Optuna settings
@@ -630,6 +646,8 @@ def main():
     parser.add_argument('--storage', type=str, default=None, help='Optuna storage (e.g., sqlite:///study.db)')
     parser.add_argument('--optuna_seed', type=int, default=SEED, help='Seed for Optuna sampler')
     parser.add_argument('--load_if_exists', action='store_true', help='Reuse study if it exists')
+    parser.add_argument('--use_cli_ranges', action='store_true',
+                        help='Use the passed sweep ranges instead of forcing default ranges.')
 
     # Search space (set min=max to fix a value)
     parser.add_argument('--base_lr_low', type=float, default=1e-5)
@@ -654,20 +672,21 @@ def main():
 
     args = parser.parse_args()
 
-    # Keep sweep ranges aligned with the active experiment contract even when an older
-    # sbatch script passes stale range flags.
-    args.base_lr_low = 1e-5
-    args.base_lr_high = 5e-2
-    args.classifier_lr_low = 1e-5
-    args.classifier_lr_high = 5e-2
-    args.lr2_mult_low = 1e-3
-    args.lr2_mult_high = 1.0
-    args.att_epoch_min = 1
-    args.att_epoch_max = 29
-    args.kl_start_low = 0.1
-    args.kl_start_high = 50.0
-    args.kl_inc_low = 0.0
-    args.kl_inc_high = 0.0
+    # Backward-compatible behavior: keep forcing the canonical sweep ranges unless
+    # explicitly told to respect CLI-provided ranges.
+    if not args.use_cli_ranges:
+        args.base_lr_low = 1e-5
+        args.base_lr_high = 5e-2
+        args.classifier_lr_low = 1e-5
+        args.classifier_lr_high = 5e-2
+        args.lr2_mult_low = 1e-3
+        args.lr2_mult_high = 1.0
+        args.att_epoch_min = 1
+        args.att_epoch_max = 29
+        args.kl_start_low = 0.1
+        args.kl_start_high = 50.0
+        args.kl_inc_low = 0.0
+        args.kl_inc_high = 0.0
 
     targets = [d.lower() for d in args.target]
     unknown = [d for d in targets if d not in ALL_DOMAINS]
@@ -779,7 +798,8 @@ def main():
         print(
             f"[TRIAL {trial.number}] start params={{'base_lr': {base_lr}, 'classifier_lr': {classifier_lr}, "
             f"'lr2_mult': {lr2_mult}, 'attention_epoch': {attention_epoch}, "
-            f"'kl_lambda_start': {kl_lambda_start}, 'kl_increment': {kl_increment}}}",
+            f"'kl_lambda_start': {kl_lambda_start}, 'kl_increment': {kl_increment}, "
+            f"'resnet_dropout': {args.resnet_dropout} (fixed)}}",
             flush=True
         )
 
@@ -795,7 +815,7 @@ def main():
                               num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g),
         }
 
-        model = make_cam_model(args.num_classes).to(DEVICE)
+        model = make_cam_model(args.num_classes, args.resnet_dropout).to(DEVICE)
 
         trial_args = argparse.Namespace(
             base_lr=base_lr,
@@ -911,7 +931,8 @@ def main():
             "Best params resolved: "
             f"base_lr={best_base_lr} classifier_lr={best_classifier_lr} lr2_mult={best_lr2_mult} "
             f"base_lr_post={best_base_lr_post} classifier_lr_post={best_classifier_lr_post} "
-            f"att_epoch={best_attention_epoch} kl_start={best_kl_lambda_start} kl_inc={best_kl_increment}",
+            f"att_epoch={best_attention_epoch} kl_start={best_kl_lambda_start} kl_inc={best_kl_increment} "
+            f"resnet_dropout={args.resnet_dropout} (fixed)",
             flush=True,
         )
 
@@ -962,7 +983,7 @@ def main():
                                       num_workers=args.num_workers, worker_init_fn=seed_worker, generator=g),
                 }
 
-                model = make_cam_model(args.num_classes).to(DEVICE)
+                model = make_cam_model(args.num_classes, args.resnet_dropout).to(DEVICE)
 
                 run_args = argparse.Namespace(
                     base_lr=best_base_lr,

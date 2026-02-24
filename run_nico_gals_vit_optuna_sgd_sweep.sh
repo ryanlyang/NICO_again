@@ -67,6 +67,13 @@ STUDY_NAME=${STUDY_NAME:-nico_gals_vit_sgd_${TARGET_TAG}}
 OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_nico_gals_vit_sgd_v1_${TARGET_TAG}.db}
 FRESH_START=${FRESH_START:-1}
 
+# Optional sweep overrides (set low=high to lock by domain)
+BASE_LR_LOW=${BASE_LR_LOW:-1e-5}
+BASE_LR_HIGH=${BASE_LR_HIGH:-5e-2}
+CLASSIFIER_LR_LOW=${CLASSIFIER_LR_LOW:-1e-5}
+CLASSIFIER_LR_HIGH=${CLASSIFIER_LR_HIGH:-5e-2}
+RESNET_DROPOUT=${RESNET_DROPOUT:-0.1}
+
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Missing REPO_ROOT: $REPO_ROOT" >&2
   exit 1
@@ -122,6 +129,10 @@ echo "Targets: $TARGET_DOMAINS"
 echo "Trials: $N_TRIALS"
 echo "Rerun best: $RERUN_BEST"
 echo "Rerun seeds: $RERUN_NUM_SEEDS (start=$RERUN_SEED_START)"
+echo "Sweep ranges:"
+echo "  base_lr: [$BASE_LR_LOW, $BASE_LR_HIGH]"
+echo "  classifier_lr: [$CLASSIFIER_LR_LOW, $CLASSIFIER_LR_HIGH]"
+echo "  resnet_dropout: $RESNET_DROPOUT (fixed)"
 if [[ -n "${TIMEOUT_SECONDS}" ]]; then
   echo "Timeout: $TIMEOUT_SECONDS"
 fi
@@ -135,6 +146,11 @@ srun --unbuffered python -u run_nico_gals_vit_optuna_sgd.py \
   --output_dir "$OUTPUT_DIR" \
   --target $TARGET_DOMAINS \
   --n_trials "$N_TRIALS" \
+  --base_lr_low "$BASE_LR_LOW" \
+  --base_lr_high "$BASE_LR_HIGH" \
+  --classifier_lr_low "$CLASSIFIER_LR_LOW" \
+  --classifier_lr_high "$CLASSIFIER_LR_HIGH" \
+  --resnet_dropout "$RESNET_DROPOUT" \
   --rerun_best "$RERUN_BEST" \
   --rerun_num_seeds "$RERUN_NUM_SEEDS" \
   --rerun_seed_start "$RERUN_SEED_START" \

@@ -60,6 +60,7 @@ TARGET_TAG=${TARGET_TAG:-$(echo "$TARGET_DOMAINS" | tr ' ' '-')}
 STUDY_NAME=${STUDY_NAME:-nico_guided_sgd_valacc_${TARGET_TAG}}
 OPTUNA_STORAGE=${OPTUNA_STORAGE:-sqlite:///$OUTPUT_DIR/optuna_guided_sgd_valacc_v1_${TARGET_TAG}.db}
 FRESH_START=${FRESH_START:-1}
+USE_CLI_RANGES=${USE_CLI_RANGES:-0}
 
 # Guided Optuna sweep ranges (kept aligned with run_guided_optuna_sgd.py)
 BASE_LR_LOW=${BASE_LR_LOW:-1e-5}
@@ -75,6 +76,7 @@ KL_START_HIGH=${KL_START_HIGH:-50.0}
 # Locked: no kl_increment sweep
 KL_INC_LOW=${KL_INC_LOW:-0.0}
 KL_INC_HIGH=${KL_INC_HIGH:-0.0}
+RESNET_DROPOUT=${RESNET_DROPOUT:-0.0}
 
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Missing REPO_ROOT: $REPO_ROOT" >&2
@@ -132,6 +134,7 @@ echo "  lr2_mult: [$LR2_MULT_LOW, $LR2_MULT_HIGH]"
 echo "  attention_epoch: [$ATT_EPOCH_MIN, $ATT_EPOCH_MAX]"
 echo "  kl_lambda_start: [$KL_START_LOW, $KL_START_HIGH]"
 echo "  kl_increment: [$KL_INC_LOW, $KL_INC_HIGH] (locked)"
+echo "  resnet_dropout: $RESNET_DROPOUT (fixed)"
 if [[ -n "${TIMEOUT_SECONDS}" ]]; then
   echo "Timeout: $TIMEOUT_SECONDS"
 fi
@@ -139,6 +142,9 @@ which python
 
 if [[ -n "${TIMEOUT_SECONDS}" ]]; then
   EXTRA_ARGS+=(--timeout "$TIMEOUT_SECONDS")
+fi
+if [[ "$USE_CLI_RANGES" -eq 1 ]]; then
+  EXTRA_ARGS+=(--use_cli_ranges)
 fi
 
 srun --unbuffered python -u run_guided_optuna_sgd_valacc.py \
@@ -149,6 +155,7 @@ srun --unbuffered python -u run_guided_optuna_sgd_valacc.py \
   --output_dir "$OUTPUT_DIR" \
   --target $TARGET_DOMAINS \
   --n_trials "$N_TRIALS" \
+  --resnet_dropout "$RESNET_DROPOUT" \
   --base_lr_low "$BASE_LR_LOW" \
   --base_lr_high "$BASE_LR_HIGH" \
   --classifier_lr_low "$CLASSIFIER_LR_LOW" \
