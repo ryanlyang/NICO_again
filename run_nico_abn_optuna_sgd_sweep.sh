@@ -7,7 +7,7 @@
 #SBATCH --time=5-00:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
+#SBATCH --mem=32G
 #SBATCH --output=logsNICO/nico_abn_sgd_optuna_%j.out
 #SBATCH --error=logsNICO/nico_abn_sgd_optuna_%j.err
 #SBATCH --signal=TERM@120
@@ -55,7 +55,7 @@ TARGET_DOMAINS=${TARGET_DOMAINS:?Set TARGET_DOMAINS (e.g., "autumn rock")}
 
 DATASET=${DATASET:-NICO}
 TIMEOUT_SECONDS=${TIMEOUT_SECONDS-}
-N_TRIALS=${N_TRIALS:-50}
+N_TRIALS=${N_TRIALS:-20}
 RERUN_BEST=${RERUN_BEST:-1}
 RERUN_NUM_SEEDS=${RERUN_NUM_SEEDS:-5}
 RERUN_SEED_START=${RERUN_SEED_START:-59}
