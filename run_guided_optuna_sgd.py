@@ -13,6 +13,8 @@ import csv
 import math
 import argparse
 import random
+import sys
+import atexit
 
 import numpy as np
 from PIL import Image
@@ -654,6 +656,57 @@ def parse_csv_list(s: str):
     return [x.strip() for x in (s or "").split(",") if x.strip()]
 
 
+class _TeeStream:
+    def __init__(self, primary, mirror):
+        self.primary = primary
+        self.mirror = mirror
+
+    def write(self, data):
+        self.primary.write(data)
+        self.mirror.write(data)
+        return len(data)
+
+    def flush(self):
+        self.primary.flush()
+        self.mirror.flush()
+
+    def isatty(self):
+        if hasattr(self.primary, "isatty"):
+            return self.primary.isatty()
+        return False
+
+    @property
+    def encoding(self):
+        return getattr(self.primary, "encoding", "utf-8")
+
+
+def _enable_manual_logging(log_path: str):
+    log_abs = os.path.abspath(log_path)
+    log_dir = os.path.dirname(log_abs)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
+    log_file = open(log_abs, "a", buffering=1)
+    orig_stdout = sys.stdout
+    orig_stderr = sys.stderr
+
+    sys.stdout = _TeeStream(orig_stdout, log_file)
+    sys.stderr = _TeeStream(orig_stderr, log_file)
+
+    def _restore_streams():
+        try:
+            sys.stdout = orig_stdout
+            sys.stderr = orig_stderr
+        finally:
+            try:
+                log_file.close()
+            except Exception:
+                pass
+
+    atexit.register(_restore_streams)
+    return log_abs
+
+
 def main():
     parser = argparse.ArgumentParser(description='Optuna search for Guided CNN on NICO++ (official splits)')
 
@@ -707,6 +760,10 @@ def main():
     parser.add_argument('--rerun_seed_start', type=int, default=59, help='Start seed for reruns (if --rerun_seeds not set).')
     parser.add_argument('--rerun_num_seeds', type=int, default=5, help='Number of rerun seeds (if --rerun_seeds not set).')
     parser.add_argument('--rerun_seeds', type=str, default='', help='Comma-separated explicit rerun seeds.')
+    parser.add_argument('--manual_log', type=int, default=1,
+                        help='Mirror stdout/stderr to a log file even outside sbatch (1/0).')
+    parser.add_argument('--manual_log_path', type=str, default='',
+                        help='Optional explicit path for manual log file.')
 
     args = parser.parse_args()
 
@@ -740,6 +797,18 @@ def main():
     run_name = f"target_{'-'.join(args.target)}"
     output_dir = os.path.join(args.output_dir, run_name)
     os.makedirs(output_dir, exist_ok=True)
+
+    if int(args.manual_log) == 1:
+        if args.manual_log_path.strip():
+            manual_log_path = args.manual_log_path.strip()
+        else:
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            manual_log_path = os.path.join(
+                output_dir,
+                f"manual_console_{stamp}_pid{os.getpid()}.log",
+            )
+        active_log_path = _enable_manual_logging(manual_log_path)
+        print(f"[LOG] Mirroring stdout/stderr to {active_log_path}", flush=True)
 
     seed_everything(args.seed)
     base_g = torch.Generator()
