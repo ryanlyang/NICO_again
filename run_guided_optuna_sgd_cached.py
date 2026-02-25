@@ -445,6 +445,20 @@ def _state_dict_to_cpu(state_dict):
     return {k: v.detach().cpu() for k, v in state_dict.items()}
 
 
+def _load_checkpoint(path, map_location="cpu"):
+    """
+    Load trusted local checkpoints across torch versions.
+    Torch >=2.6 defaults torch.load(..., weights_only=True), which breaks when
+    checkpoint payload contains RNG state tuples (numpy/python). Our cache files
+    are generated locally by this script, so explicit weights_only=False is safe.
+    """
+    try:
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        # Older torch versions do not support the weights_only kwarg.
+        return torch.load(path, map_location=map_location)
+
+
 def _build_pre_attention_cache(
     args,
     train_dataset,
@@ -613,7 +627,7 @@ def train_one_trial_from_cache(
     if not os.path.exists(pre_ckpt_path):
         raise FileNotFoundError(f"Missing pre-attention cache checkpoint: {pre_ckpt_path}")
 
-    pre_ckpt = torch.load(pre_ckpt_path, map_location="cpu")
+    pre_ckpt = _load_checkpoint(pre_ckpt_path, map_location="cpu")
     model.load_state_dict(pre_ckpt["model_state_dict"])
 
     # Restore RNG states to continue the same stochastic stream after pre-phase.
@@ -654,7 +668,7 @@ def train_one_trial_from_cache(
     pre_best_val_acc = float(pre_ckpt.get("best_val_acc_up_to_now", -1.0))
     pre_best_val_epoch = int(pre_ckpt.get("best_val_epoch_up_to_now", -1))
     if pre_best_val_epoch >= 0 and os.path.exists(_cache_ckpt_path(cache_dir, pre_best_val_epoch)):
-        pre_best_ckpt = torch.load(_cache_ckpt_path(cache_dir, pre_best_val_epoch), map_location="cpu")
+        pre_best_ckpt = _load_checkpoint(_cache_ckpt_path(cache_dir, pre_best_val_epoch), map_location="cpu")
         best_wts_val = copy.deepcopy(pre_best_ckpt["model_state_dict"])
     else:
         best_wts_val = copy.deepcopy(pre_ckpt["model_state_dict"])
