@@ -213,7 +213,7 @@ def main():
     p.add_argument("--phase", type=str, default="test", choices=["train", "val", "test"])
     p.add_argument("--model_name", type=str, default="ViT-B/32")
     p.add_argument("--prompt_set", type=str, default="gals", choices=["gals", "photo", "imagenet"])
-    p.add_argument("--class_name_source", type=str, default="canonical", choices=["canonical", "paths"],
+    p.add_argument("--class_name_source", type=str, default="paths", choices=["canonical", "paths"],
                    help="Use canonical NICO class names or infer class names from txtlist paths by label.")
     p.add_argument("--batch_size", type=int, default=128)
     p.add_argument("--num_workers", type=int, default=4)
