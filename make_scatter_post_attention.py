@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 # Sweep beta over this range and choose the best pooled Pearson on filtered rows.
 BETA_MIN = 1
 BETA_MAX = 50
-BETA_REPORT = 10
+BETA_REPORT = 6
 
 # Reads LOG_TEXT from make_scatter.py so you do not need to paste twice.
 SOURCE_SCATTER_FILE = "make_scatter.py"

@@ -518,6 +518,8 @@ et=22.00h, beta=10.0, ig_steps=16, device=cuda:0, study=nico_guided_timebox_scat
 [TRIAL 11][Epoch 24] val_acc=0.823175 ig_fwd_kl=1.997677 log_optim_num=-20.171357 optim_num=1.736564e-09 test={'autumn': 78.3397471137988, 'rock': 77.99367374604608, 'overall': 78.14980158730158}
 [TRIAL 11][Epoch 25] val_acc=0.822834 ig_fwd_kl=1.997092 log_optim_num=-20.165918 optim_num=1.746036e-09 test={'autumn': 78.55964815832876, 'rock': 78.26479891549933, 'overall': 78.39781746031746}
 
+
+
 """
 import re
 import math
