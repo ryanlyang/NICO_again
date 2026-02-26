@@ -55,7 +55,7 @@ OUTPUT_DIR=${OUTPUT_DIR:-/home/ryreu/guided_cnn/NICO_runs/output}
 DATASET=${DATASET:-NICO}
 PHASE=${PHASE:-test}
 PROMPT_SET=${PROMPT_SET:-gals}
-CLASS_NAME_SOURCE=${CLASS_NAME_SOURCE:-canonical}
+CLASS_NAME_SOURCE=${CLASS_NAME_SOURCE:-paths}
 BATCH_SIZE=${BATCH_SIZE:-128}
 NUM_WORKERS=${NUM_WORKERS:-4}
 MODEL_NAME=${MODEL_NAME:-ViT-B/32}
@@ -112,4 +112,3 @@ done
 
 echo ""
 echo "Done: CLIP ViT zero-shot evaluated for all three held-out domain pairs."
-
